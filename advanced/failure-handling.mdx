@@ -1,0 +1,841 @@
+---
+title: "Failure Handling"
+description: "Circuit breaker, cooldowns, retry logic, and stream failover for resilient multi-account operation"
+---
+
+# Failure Handling
+
+Codex Multi-Auth implements comprehensive failure handling to maintain resilience across multiple ChatGPT accounts.
+
+## Failure Policy Framework
+
+From `lib/request/failure-policy.ts:11`:
+
+```typescript
+export type FailureKind =
+  | "auth-refresh"    // Token refresh failed
+  | "network"         // Network error (ECONNRESET, timeout, etc.)
+  | "server"          // 5xx server error
+  | "rate-limit"      // 429 Too Many Requests
+  | "empty-response"; // SSE stream ended without data
+
+export type FailoverMode = "aggressive" | "balanced" | "conservative";
+
+export interface FailurePolicyDecision {
+  rotateAccount: boolean;        // Switch to next account?
+  refundToken: boolean;          // Refund token bucket?
+  recordFailure: boolean;        // Decrement health score?
+  markRateLimited: boolean;      // Set rate limit cooldown?
+  removeAccount: boolean;        // Remove from pool?
+  cooldownMs?: number;           // Cooldown duration
+  cooldownReason?: CooldownReason;
+  retrySameAccount: boolean;     // Retry with same account?
+  retryDelayMs?: number;         // Delay before retry
+  handoffStrategy: "soft" | "hard"; // Account rotation urgency
+}
+```
+
+## Failure Types & Policies
+
+### 1. Auth Refresh Failure
+
+From `lib/request/failure-policy.ts:82`:
+
+```typescript
+case "auth-refresh": {
+  const failures = Math.max(0, Math.floor(input.consecutiveAuthFailures ?? 0));
+  const maxFailures = Math.max(
+    1,
+    Math.floor(input.maxAuthFailuresBeforeRemoval ?? 3),
+  );
+  
+  return {
+    rotateAccount: true,           // Always rotate
+    refundToken: false,            // Don't refund (not a request failure)
+    recordFailure: false,          // Don't decrement health
+    markRateLimited: false,
+    removeAccount: failures >= maxFailures, // Remove after 3 failures
+    cooldownMs: 30_000,           // 30 seconds
+    cooldownReason: "auth-failure",
+    retrySameAccount: false,
+    handoffStrategy: "hard",      // Immediate rotation
+  };
+}
+```
+
+**Behavior**:
+- Rotate to next account immediately
+- Apply 30-second cooldown
+- Remove account after 3 consecutive auth failures
+- Hard handoff (no retry on same account)
+
+**Example Flow**:
+```typescript
+// Request with expired token
+const result = await queuedRefresh(account.refreshToken);
+
+if (result.type === "failed") {
+  account.consecutiveAuthFailures = (account.consecutiveAuthFailures ?? 0) + 1;
+  
+  const policy = evaluateFailurePolicy({
+    kind: "auth-refresh",
+    consecutiveAuthFailures: account.consecutiveAuthFailures,
+  });
+  
+  if (policy.removeAccount && account.consecutiveAuthFailures >= 3) {
+    // Remove account from pool
+    accounts.splice(accountIndex, 1);
+    await saveAccounts({ version: 3, accounts, activeIndex: 0 });
+  } else {
+    // Apply cooldown
+    account.cooldownUntil = Date.now() + policy.cooldownMs;
+    account.cooldownReason = policy.cooldownReason;
+  }
+}
+```
+
+### 2. Network Error
+
+From `lib/request/failure-policy.ts:101`:
+
+```typescript
+case "network": {
+  const mode = getFailoverMode(input);
+  const cooldownMs = Math.max(
+    0,
+    Math.floor(overrides?.networkCooldownMs ?? 6_000), // Default 6s
+  );
+  const retryDelayMs = NETWORK_RETRY_DELAY_MS[mode];
+  const retrySameAccount = retryDelayMs > 0;
+  
+  return {
+    rotateAccount: !retrySameAccount,
+    refundToken: true,            // Refund (request didn't reach server)
+    recordFailure: true,          // Decrement health
+    markRateLimited: false,
+    removeAccount: false,
+    cooldownMs,
+    cooldownReason: cooldownMs > 0 ? "network-error" : undefined,
+    retrySameAccount,
+    retryDelayMs: retrySameAccount ? retryDelayMs : undefined,
+    handoffStrategy: "soft",      // Gradual rotation
+  };
+}
+```
+
+**Failover Mode Behavior**:
+```typescript
+const NETWORK_RETRY_DELAY_MS = {
+  aggressive: 0,     // Immediate rotation, no retry
+  balanced: 250,     // Retry after 250ms
+  conservative: 900, // Retry after 900ms
+};
+```
+
+**Example**:
+```typescript
+// Network error during fetch
+try {
+  const response = await fetch(url, { signal: controller.signal });
+} catch (error) {
+  if (error.name === "AbortError" || error.code === "ECONNRESET") {
+    const policy = evaluateFailurePolicy(
+      { kind: "network", failoverMode: "balanced" },
+      { networkCooldownMs: 6000 },
+    );
+    
+    if (policy.retrySameAccount && policy.retryDelayMs) {
+      // Retry with same account after delay
+      await sleep(policy.retryDelayMs);
+      return retry();
+    } else {
+      // Rotate to next account
+      account.cooldownUntil = Date.now() + policy.cooldownMs;
+      account.healthScore = Math.max(0, (account.healthScore ?? 100) - 10);
+      return rotateAndRetry();
+    }
+  }
+}
+```
+
+### 3. Server Error (5xx)
+
+From `lib/request/failure-policy.ts:122`:
+
+```typescript
+case "server": {
+  const mode = getFailoverMode(input);
+  const retryAfterMs = Math.max(0, Math.floor(input.serverRetryAfterMs ?? 0));
+  const fallbackCooldown = Math.max(
+    0,
+    Math.floor(overrides?.serverCooldownMs ?? 4_000), // Default 4s
+  );
+  const cooldownMs = retryAfterMs > 0 ? retryAfterMs : fallbackCooldown;
+  const retrySameAccount = mode === "conservative" && retryAfterMs <= 0;
+  
+  return {
+    rotateAccount: !retrySameAccount,
+    refundToken: true,            // Refund (server error, not client)
+    recordFailure: true,          // Decrement health
+    markRateLimited: false,
+    removeAccount: false,
+    cooldownMs,
+    cooldownReason: cooldownMs > 0 ? "network-error" : undefined,
+    retrySameAccount,
+    retryDelayMs: retrySameAccount ? 500 : undefined,
+    handoffStrategy: "hard",      // Immediate rotation
+  };
+}
+```
+
+**Retry-After Header Handling**:
+```typescript
+const retryAfter = response.headers.get("retry-after");
+const retryAfterMs = retryAfter ? parseInt(retryAfter) * 1000 : 0;
+
+const policy = evaluateFailurePolicy(
+  { kind: "server", serverRetryAfterMs: retryAfterMs },
+  { serverCooldownMs: 4000 },
+);
+
+account.cooldownUntil = Date.now() + policy.cooldownMs;
+```
+
+### 4. Rate Limit (429)
+
+From `lib/request/failure-policy.ts:144`:
+
+```typescript
+case "rate-limit": {
+  return {
+    rotateAccount: true,           // Always rotate
+    refundToken: false,            // Don't refund (quota exhausted)
+    recordFailure: false,          // Don't decrement health (expected)
+    markRateLimited: true,         // Set rate limit cooldown
+    removeAccount: false,
+    retrySameAccount: false,
+    handoffStrategy: "hard",       // Immediate rotation
+  };
+}
+```
+
+**Rate Limit Handling**:
+```typescript
+if (response.status === 429) {
+  const rateLimit = extractRateLimitInfoFromBody(response, bodyText);
+  
+  const policy = evaluateFailurePolicy({ kind: "rate-limit" });
+  
+  // Mark account as rate limited
+  if (policy.markRateLimited) {
+    const resetTime = Date.now() + (rateLimit?.retryAfterMs ?? 60_000);
+    account.rateLimitResetTimes = account.rateLimitResetTimes ?? {};
+    account.rateLimitResetTimes[modelFamily] = resetTime;
+    account.rateLimitResetTimes[`${modelFamily}:${model}`] = resetTime;
+  }
+  
+  // Don't apply cooldown (use rate limit reset time instead)
+  // Don't decrement health (rate limits are expected)
+}
+```
+
+**Rate Limit Reset Time Extraction** (from `lib/request/fetch-helpers.ts:841`):
+```typescript
+function parseRetryAfterMs(
+  response: Response,
+  parsedBody?: { resetsAt?: number; retryAfterMs?: number },
+): number | null {
+  // Priority order:
+  // 1. retry_after_ms from body
+  // 2. Retry-After-Ms header
+  // 3. Retry-After header (seconds)
+  // 4. x-codex-primary-reset-at header
+  // 5. x-codex-secondary-reset-at header
+  // 6. x-ratelimit-reset header
+  // 7. resets_at from body
+  
+  if (parsedBody?.retryAfterMs) {
+    return normalizeRetryAfter(parsedBody.retryAfterMs);
+  }
+  
+  const retryAfterMsHeader = response.headers.get("retry-after-ms");
+  if (retryAfterMsHeader) {
+    return parseInt(retryAfterMsHeader, 10);
+  }
+  
+  const retryAfterHeader = response.headers.get("retry-after");
+  if (retryAfterHeader) {
+    return parseInt(retryAfterHeader, 10) * 1000; // Convert seconds to ms
+  }
+  
+  // Check reset-at headers
+  const resetHeaders = [
+    "x-codex-primary-reset-at",
+    "x-codex-secondary-reset-at",
+    "x-ratelimit-reset",
+  ];
+  const now = Date.now();
+  for (const header of resetHeaders) {
+    const value = response.headers.get(header);
+    if (!value) continue;
+    const timestamp = parseInt(value, 10);
+    if (timestamp > 0) {
+      const delta = (timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp) - now;
+      if (delta > 0) return delta;
+    }
+  }
+  
+  return null;
+}
+```
+
+### 5. Empty Response
+
+From `lib/request/failure-policy.ts:155`:
+
+```typescript
+case "empty-response": {
+  const mode = getFailoverMode(input);
+  const retryDelayMs = EMPTY_RESPONSE_RETRY_DELAY_MS[mode];
+  const retrySameAccount = retryDelayMs > 0;
+  
+  return {
+    rotateAccount: !retrySameAccount,
+    refundToken: true,            // Refund (invalid response)
+    recordFailure: true,          // Decrement health
+    markRateLimited: false,
+    removeAccount: false,
+    retrySameAccount,
+    retryDelayMs: retrySameAccount ? retryDelayMs : undefined,
+    handoffStrategy: "soft",      // Gradual rotation
+  };
+}
+```
+
+**Empty Response Detection** (from `lib/request/response-handler.ts:194`):
+```typescript
+export function isEmptyResponse(data: unknown): boolean {
+  if (!data || typeof data !== "object") return true;
+  
+  const response = data as {
+    output?: unknown[];
+    status?: string;
+  };
+  
+  // Check if output is empty or missing
+  if (!response.output || !Array.isArray(response.output)) return true;
+  if (response.output.length === 0) return true;
+  
+  // Check if all output items are empty
+  return response.output.every((item) => {
+    if (!item || typeof item !== "object") return true;
+    const typedItem = item as { text?: string; type?: string };
+    return !typedItem.text || typedItem.text.trim() === "";
+  });
+}
+```
+
+## Circuit Breaker
+
+From `lib/circuit-breaker.ts:24`:
+
+```typescript
+export class CircuitBreaker {
+  private state: CircuitState = "closed"; // "closed" | "open" | "half-open"
+  private failures: number[] = [];        // Failure timestamps
+  private lastStateChange: number = Date.now();
+  private halfOpenAttempts: number = 0;
+  
+  constructor(config: Partial<CircuitBreakerConfig> = {}) {
+    this.config = {
+      failureThreshold: 3,      // Open after 3 failures in window
+      failureWindowMs: 60_000,  // 60-second sliding window
+      resetTimeoutMs: 30_000,   // 30s before half-open
+      halfOpenMaxAttempts: 1,   // 1 test request in half-open
+      ...config,
+    };
+  }
+  
+  canExecute(): boolean {
+    const now = Date.now();
+    
+    if (this.state === "open") {
+      if (now - this.lastStateChange >= this.config.resetTimeoutMs) {
+        this.transitionToHalfOpen(now);
+      } else {
+        throw new CircuitOpenError();
+      }
+    }
+    
+    if (this.state === "half-open") {
+      if (this.halfOpenAttempts >= this.config.halfOpenMaxAttempts) {
+        throw new CircuitOpenError("Circuit is half-open");
+      }
+      this.halfOpenAttempts += 1;
+      return true;
+    }
+    
+    return true; // closed state
+  }
+  
+  recordSuccess(): void {
+    if (this.state === "half-open") {
+      this.resetToClosed(Date.now()); // Success in half-open → closed
+    }
+    if (this.state === "closed") {
+      this.pruneFailures(Date.now());
+    }
+  }
+  
+  recordFailure(): void {
+    const now = Date.now();
+    this.pruneFailures(now);
+    this.failures.push(now);
+    
+    if (this.state === "half-open") {
+      this.transitionToOpen(now); // Failure in half-open → open
+      return;
+    }
+    
+    if (this.state === "closed" && this.failures.length >= this.config.failureThreshold) {
+      this.transitionToOpen(now); // Threshold reached → open
+    }
+  }
+}
+```
+
+**State Transitions**:
+```
+Closed
+  |
+  | 3 failures in 60s window
+  v
+Open (30s timeout)
+  |
+  | 30s elapsed
+  v
+Half-Open (1 test request)
+  |
+  +-- Success --> Closed
+  |
+  +-- Failure --> Open
+```
+
+**Usage Example**:
+```typescript
+const breaker = getCircuitBreaker(`account:${accountIndex}`);
+
+try {
+  if (!breaker.canExecute()) {
+    throw new CircuitOpenError();
+  }
+  
+  const response = await fetch(url, requestInit);
+  
+  breaker.recordSuccess();
+  return response;
+} catch (error) {
+  breaker.recordFailure();
+  throw error;
+}
+```
+
+## Stream Failover
+
+From `lib/request/stream-failover.ts:115`:
+
+```typescript
+export function withStreamingFailover(
+  initialResponse: Response,
+  getFallbackResponse: (attempt: number, emittedBytes: number) => Promise<Response | null>,
+  options: StreamFailoverOptions = {},
+): Response {
+  const maxFailovers = Math.max(0, Math.floor(options.maxFailovers ?? 1));
+  const softTimeoutMs = Math.max(
+    1_000,
+    Math.floor(options.softTimeoutMs ?? 15_000),
+  );
+  const hardTimeoutMs = Math.max(
+    softTimeoutMs,
+    Math.floor(options.hardTimeoutMs ?? 45_000),
+  );
+  
+  if (!initialResponse.body || maxFailovers <= 0) {
+    return initialResponse;
+  }
+  
+  let currentReader = initialResponse.body.getReader();
+  let failoverAttempt = 0;
+  let emittedBytes = 0;
+  
+  const body = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      while (true) {
+        try {
+          // Read with soft/hard timeout
+          const result = await readChunkWithSoftHardTimeout(
+            currentReader,
+            softTimeoutMs,
+            hardTimeoutMs,
+          );
+          
+          if (result.done) {
+            controller.close();
+            return;
+          }
+          
+          if (result.value && result.value.byteLength > 0) {
+            emittedBytes += result.value.byteLength;
+            controller.enqueue(result.value);
+          }
+        } catch (error) {
+          if (isStallTimeoutError(error) && failoverAttempt < maxFailovers) {
+            // Attempt failover
+            failoverAttempt += 1;
+            const fallback = await getFallbackResponse(failoverAttempt, emittedBytes);
+            
+            if (fallback?.body) {
+              // Switch to fallback stream
+              await currentReader.cancel();
+              currentReader.releaseLock();
+              currentReader = fallback.body.getReader();
+              
+              // Inject failover marker
+              const marker = new TextEncoder().encode(
+                `: codex-multi-auth failover ${failoverAttempt}\n\n`,
+              );
+              controller.enqueue(marker);
+              
+              continue; // Resume reading from fallback
+            }
+          }
+          
+          // No fallback available or max failovers reached
+          controller.error(error);
+          return;
+        }
+      }
+    },
+  });
+  
+  return new Response(body, {
+    status: initialResponse.status,
+    statusText: initialResponse.statusText,
+    headers: initialResponse.headers,
+  });
+}
+```
+
+**Stall Detection**:
+```typescript
+async function readChunkWithSoftHardTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  softTimeoutMs: number,
+  hardTimeoutMs: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  const readPromise = reader.read();
+  
+  try {
+    // Try soft timeout first (15s)
+    return await readChunkWithTimeout(readPromise, softTimeoutMs);
+  } catch (error) {
+    if (!isStallTimeoutError(error) || hardTimeoutMs <= softTimeoutMs) {
+      throw error;
+    }
+    
+    // Extend to hard timeout (45s total)
+    return await readChunkWithTimeout(readPromise, hardTimeoutMs - softTimeoutMs);
+  }
+}
+```
+
+**Failover Example**:
+```typescript
+const response = withStreamingFailover(
+  initialResponse,
+  async (attempt, emittedBytes) => {
+    // Rotate to next account
+    const nextAccount = selectNextAccount();
+    if (!nextAccount) return null;
+    
+    // Re-execute request with fallback account
+    return await fetch(url, {
+      ...requestInit,
+      headers: createCodexHeaders(
+        requestInit,
+        nextAccount.accountId,
+        nextAccount.accessToken,
+      ),
+    });
+  },
+  {
+    maxFailovers: 2,          // Try up to 2 additional accounts
+    softTimeoutMs: 15_000,    // 15s soft timeout
+    hardTimeoutMs: 45_000,    // 45s hard timeout
+  },
+);
+```
+
+**Stream Markers**:
+```
+data: {"type":"response.output_text.delta","delta":"Hello"}
+data: {"type":"response.output_text.delta","delta":" wor"}
+: codex-multi-auth failover 1 req:thread-abc123
+data: {"type":"response.output_text.delta","delta":"ld"}
+data: {"type":"response.done","response":{...}}
+```
+
+## Cooldown Management
+
+From `index.ts:1420`:
+
+```typescript
+// Apply cooldown from failure policy
+if (policy.cooldownMs && policy.cooldownMs > 0) {
+  account.cooldownUntil = Date.now() + policy.cooldownMs;
+  account.cooldownReason = policy.cooldownReason;
+}
+
+// Filter accounts in cooldown during selection
+const now = Date.now();
+const available = accounts.filter((account) => {
+  if (account.cooldownUntil && account.cooldownUntil > now) {
+    return false; // Skip accounts in cooldown
+  }
+  return true;
+});
+```
+
+**Cooldown Reasons** (from `lib/storage.ts:88`):
+```typescript
+export type CooldownReason =
+  | "auth-failure"    // OAuth refresh failed
+  | "network-error"   // Network/server error
+  | "manual";         // User-initiated cooldown
+```
+
+**Cooldown Display** (from `lib/accounts.ts:125`):
+```typescript
+export function formatCooldown(cooldownUntil: number): string {
+  const remaining = Math.max(0, cooldownUntil - Date.now());
+  if (remaining === 0) return "ready";
+  
+  const seconds = Math.ceil(remaining / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  
+  const minutes = Math.ceil(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  
+  const hours = Math.ceil(minutes / 60);
+  return `${hours}h`;
+}
+```
+
+## Health Scoring
+
+From `lib/accounts.ts:140`:
+
+```typescript
+class AccountManager {
+  recordFailure(accountIndex: number, decrementBy: number = 10): void {
+    const account = this.accounts[accountIndex];
+    if (!account) return;
+    
+    account.healthScore = Math.max(
+      0,
+      (account.healthScore ?? 100) - decrementBy,
+    );
+    
+    // Apply cooldown if health drops below threshold
+    if (account.healthScore < 50) {
+      account.cooldownUntil = Date.now() + 30_000; // 30s cooldown
+      account.cooldownReason = "network-error";
+    }
+  }
+  
+  recordSuccess(accountIndex: number): void {
+    const account = this.accounts[accountIndex];
+    if (!account) return;
+    
+    // Reset health to 100 on success
+    account.healthScore = 100;
+    
+    // Clear cooldown
+    account.cooldownUntil = undefined;
+    account.cooldownReason = undefined;
+    
+    // Reset consecutive auth failures
+    account.consecutiveAuthFailures = 0;
+  }
+}
+```
+
+**Health Score Decay**:
+```
+100 (healthy)
+ |
+ 90 (1 failure)
+ |
+ 80 (2 failures)
+ |
+ 70 (3 failures)
+ |
+ 60 (4 failures)
+ |
+ 50 (5 failures) → Apply 30s cooldown
+ |
+ 40 (6 failures)
+ |
+ 30 (7 failures)
+ |
+ 20 (8 failures)
+ |
+ 10 (9 failures)
+ |
+ 0  (10 failures) → Max penalty
+```
+
+## Retry Strategies
+
+### Same-Account Retry
+
+From `index.ts:1640`:
+
+```typescript
+if (policy.retrySameAccount && policy.retryDelayMs) {
+  // Increment same-account retry counter
+  sameAccountRetries += 1;
+  
+  // Enforce max same-account retries
+  if (sameAccountRetries > maxSameAccountRetries) {
+    // Force rotation
+    policy.rotateAccount = true;
+    policy.retrySameAccount = false;
+  } else {
+    // Wait before retry
+    await sleep(policy.retryDelayMs);
+    runtimeMetrics.sameAccountRetries += 1;
+    continue; // Retry with same account
+  }
+}
+```
+
+**Max Same-Account Retries** (failover-mode dependent):
+```typescript
+const maxSameAccountRetries =
+  failoverMode === "conservative" ? 2 :
+  failoverMode === "balanced" ? 1 :
+  0; // aggressive
+```
+
+### Cross-Account Retry
+
+From `index.ts:1680`:
+
+```typescript
+if (policy.rotateAccount) {
+  // Mark attempted account
+  attempted.add(currentAccountIndex);
+  
+  // Find next available account
+  let nextIndex = -1;
+  for (let i = 0; i < accountCount; i++) {
+    const candidateIndex = (currentAccountIndex + i + 1) % accountCount;
+    if (attempted.has(candidateIndex)) continue;
+    
+    const candidate = accounts[candidateIndex];
+    if (!candidate) continue;
+    
+    // Check cooldown
+    if (candidate.cooldownUntil && candidate.cooldownUntil > Date.now()) {
+      continue;
+    }
+    
+    // Check rate limits
+    const resetTime = getRateLimitResetTimeForFamily(candidate, Date.now(), modelFamily);
+    if (resetTime && resetTime > Date.now()) {
+      continue;
+    }
+    
+    nextIndex = candidateIndex;
+    break;
+  }
+  
+  if (nextIndex === -1) {
+    // All accounts exhausted
+    if (retryAllAccountsRateLimited && allRateLimitedRetries < retryAllAccountsMaxRetries) {
+      // Wait for earliest rate limit reset
+      const earliestReset = Math.min(
+        ...accounts
+          .map((a) => getRateLimitResetTimeForFamily(a, Date.now(), modelFamily))
+          .filter((t): t is number => t !== null),
+      );
+      const waitMs = Math.min(
+        earliestReset - Date.now(),
+        retryAllAccountsMaxWaitMs,
+      );
+      
+      await sleepWithCountdown(waitMs, "All accounts rate limited");
+      allRateLimitedRetries += 1;
+      attempted.clear(); // Reset attempted set
+      continue;
+    }
+    
+    throw new Error("All accounts exhausted");
+  }
+  
+  currentAccountIndex = nextIndex;
+  runtimeMetrics.accountRotations += 1;
+  continue; // Retry with next account
+}
+```
+
+## Configuration
+
+**Environment Variables**:
+```bash
+# Failover mode
+CODEX_AUTH_FAILOVER_MODE=balanced  # aggressive | balanced | conservative
+
+# Cooldowns
+CODEX_AUTH_NETWORK_ERROR_COOLDOWN_MS=6000
+CODEX_AUTH_SERVER_ERROR_COOLDOWN_MS=4000
+
+# Retry limits
+CODEX_AUTH_RETRY_ALL_ACCOUNTS_MAX_RETRIES=3
+CODEX_AUTH_RETRY_ALL_ACCOUNTS_MAX_WAIT_MS=300000  # 5 minutes
+CODEX_AUTH_RETRY_ALL_ACCOUNTS_RATE_LIMITED=1      # Enable
+
+# Stream failover
+CODEX_AUTH_STREAM_FAILOVER_MAX=2
+CODEX_AUTH_STREAM_STALL_SOFT_TIMEOUT_MS=15000
+CODEX_AUTH_STREAM_STALL_HARD_TIMEOUT_MS=45000
+
+# Empty response
+CODEX_AUTH_EMPTY_RESPONSE_MAX_RETRIES=3
+CODEX_AUTH_EMPTY_RESPONSE_RETRY_DELAY_MS=500
+```
+
+**Runtime Config** (from `lib/config.ts`):
+```typescript
+export function getNetworkErrorCooldownMs(config: PluginConfig): number {
+  return getEnvInt("CODEX_AUTH_NETWORK_ERROR_COOLDOWN_MS") ??
+    config.networkErrorCooldownMs ?? 6000;
+}
+
+export function getServerErrorCooldownMs(config: PluginConfig): number {
+  return getEnvInt("CODEX_AUTH_SERVER_ERROR_COOLDOWN_MS") ??
+    config.serverErrorCooldownMs ?? 4000;
+}
+
+export function getRetryAllAccountsRateLimited(config: PluginConfig): boolean {
+  return getEnvBool("CODEX_AUTH_RETRY_ALL_ACCOUNTS_RATE_LIMITED") ??
+    config.retryAllAccountsRateLimited ?? true;
+}
+```
+
+## Related Documentation
+
+- [Architecture Overview](/advanced/architecture-overview)
+- [OAuth Flow](/advanced/oauth-flow)
+- [Request Pipeline](/advanced/request-pipeline)

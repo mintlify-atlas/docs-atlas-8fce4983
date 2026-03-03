@@ -1,0 +1,333 @@
+---
+title: Settings Screens
+description: Configure dashboard display, behavior, theme, and backend settings
+---
+
+The settings hub provides interactive configuration for dashboard display, behavior, theme, and advanced backend options.
+
+## Accessing Settings
+
+From the main dashboard:
+
+1. Navigate to "Settings" in the menu
+2. Press `Enter` to open the settings hub
+
+The settings hub displays five configuration panels:
+
+- **Account List Display**: Configure badges, layout, and sorting
+- **Summary Fields**: Choose and reorder statusline fields
+- **Behavior**: Set auto-return timing and fetch options
+- **Theme**: Select color palette and accent colors
+- **Backend**: Advanced rotation, quota, and timeout settings
+
+## Account List Display
+
+Controls how accounts appear in the main dashboard.
+
+### Available Settings
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Show Status Badges | On | Display `[ok]`, `[active]`, `[rate-limited]` badges |
+| Show [current] Badge | On | Mark the active Codex account with `[current]` |
+| Show Last Used | On | Display relative usage time ("today", "2d ago") |
+| Show Limits (5h / 7d) | On | Display quota bars for rolling windows |
+| Show Limit Cooldowns | On | Show reset timers next to quota bars |
+| Show Fetch Status | On | Display background refresh progress in subtitle |
+| Show Details for Unselected | Off | Show details on all rows vs selected row only |
+| Highlight Current Row | On | Use stronger color on the current account |
+| Enable Smart Sort | On | Sort accounts by readiness score |
+| Pin [current] when tied | Off | Keep current account at top when equally ready |
+| Quick Switch Uses Visible | On | Number keys (1-9) follow visible order |
+
+### Sort Mode
+
+- **Ready-First**: Sorts accounts by health, quota, and availability
+- **Manual**: Preserves the order accounts were added
+
+### Layout Mode
+
+- **Compact + Details Pane**: One-line rows with details shown for selected account only (default)
+- **Expanded Rows**: Multi-line rows showing details for all accounts
+
+### Keyboard Shortcuts
+
+| Key | Action |
+| --- | --- |
+| `1-9` | Quick toggle numbered options |
+| `M` | Cycle sort mode (Ready-First ↔ Manual) |
+| `L` | Cycle layout mode (Compact ↔ Expanded) |
+| `S` | Save changes and return |
+| `R` | Reset to defaults |
+| `Q` | Cancel without saving |
+
+### Live Preview
+
+The settings screen displays a live preview of how accounts will appear:
+
+```
+Preview
+1. demo@example.com [current] [active]
+Last used: today  |  Limits: 5h ██████▒▒▒▒ 62% | 7d █████▒▒▒▒▒ 49%
+details shown on selected row only
+```
+
+The preview updates immediately as you change settings.
+
+## Summary Fields
+
+Controls which fields appear in the account statusline and their order.
+
+### Available Fields
+
+| Field | Default | Description |
+| --- | --- | --- |
+| Last Used | On (order 1) | Relative usage time |
+| Limits (5h / 7d) | On (order 2) | Quota bars and percentages |
+| Status Text | On (order 3) | Status text when badges are hidden |
+
+### Field Ordering
+
+Fields display in the order you configure:
+
+1. First two fields appear on the primary line
+2. Additional fields appear on a secondary line (if expanded rows enabled)
+
+### Keyboard Shortcuts
+
+| Key | Action |
+| --- | --- |
+| `1-3` | Toggle field on/off |
+| `[` | Move focused field up |
+| `]` | Move focused field down |
+| `S` | Save changes and return |
+| `R` | Reset to defaults |
+| `Q` | Cancel without saving |
+
+### Example Configurations
+
+**Minimal display** (limits only):
+```
+5h ██████▒▒▒▒ 62% | 7d █████▒▒▒▒▒ 49%
+```
+
+**Status-first display** (status, last-used, limits):
+```
+Status: active  |  Last used: today  |  Limits: 5h 62% | 7d 49%
+```
+
+## Behavior Settings
+
+Controls timing, auto-return, and background fetch behavior.
+
+### Auto-Return Timing
+
+After performing an action (set current, delete, etc.), the dashboard can automatically return:
+
+| Delay | Use Case |
+| --- | --- |
+| 1s | Fastest loop for frequent actions |
+| 2s | Balanced default for most users (default) |
+| 4s | More time to read action output |
+
+### Additional Options
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Pause on key press | On | Any key stops auto-return timer |
+| Auto-fetch limits on menu open | On | Refresh quota when opening dashboard |
+| Show limit refresh status | On | Display `[2/7]` fetch progress in subtitle |
+| Limit cache TTL | 5m | How fresh cached quota must be before refresh |
+
+### Cache TTL Options
+
+| TTL | Description |
+| --- | --- |
+| 1m | Refresh quota every minute |
+| 5m | Refresh quota every 5 minutes (default) |
+| 10m | Refresh quota every 10 minutes |
+
+### Keyboard Shortcuts
+
+| Key | Action |
+| --- | --- |
+| `S` | Save changes and return |
+| `R` | Reset to defaults |
+| `Q` | Cancel without saving |
+
+## Theme Settings
+
+Customize dashboard colors and visual style.
+
+### Theme Presets
+
+| Preset | Description |
+| --- | --- |
+| Green | Classic terminal green (default) |
+| Blue | Modern blue palette |
+
+### Accent Colors
+
+| Color | Use |
+| --- | --- |
+| Green | Success states, current account (default) |
+| Cyan | Accent highlights |
+| Blue | Cool accent variant |
+| Yellow | Warning states, attention markers |
+
+### Live Preview
+
+Theme changes preview immediately:
+
+- Navigate through palette and accent options
+- See colors update in real-time
+- Press `Q` to cancel and restore original theme
+- Press `S` to save and apply the new theme
+
+### Keyboard Shortcuts
+
+| Key | Action |
+| --- | --- |
+| `S` | Save changes and apply theme |
+| `R` | Reset to defaults |
+| `Q` | Cancel and restore original theme |
+
+## Backend Settings
+
+Advanced settings for rotation, quota, refresh, and performance.
+
+### Categories
+
+#### Session & Sync
+
+Controls account synchronization and session behavior.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Enable Live Sync | On | Keep accounts synced when files change in another window |
+| Enable Session Affinity | On | Try to keep each conversation on the same account |
+| Enable Per-Project Accounts | Off | Keep separate account lists for each project |
+| Enable Session Recovery | On | Restore recoverable sessions after restart |
+| Enable Auto Resume | On | Automatically continue sessions when possible |
+| Live Sync Debounce | 100ms | Wait before applying sync file changes |
+| Live Sync Poll | 5s | How often to check files for updates |
+| Session Affinity TTL | 1h | How long conversation-to-account mapping is kept |
+| Session Affinity Max Entries | 256 | Maximum stored conversation mappings |
+
+#### Rotation & Quota
+
+Controls quota tracking and retry behavior.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Enable Quota Deferral | On | Delay requests before limits are fully exhausted |
+| Retry When All Rate-Limited | On | If all accounts limited, wait and try again |
+| 5h Remaining Threshold | 5% | Start delaying when 5h remaining reaches this percent |
+| 7d Remaining Threshold | 5% | Start delaying when weekly remaining reaches this percent |
+| Max Preemptive Deferral | 5m | Maximum time allowed for quota-based delay |
+
+#### Refresh & Recovery
+
+Controls token refresh timing and backup behavior.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Enable Token Refresh Guard | On | Refresh tokens early in the background |
+| Enable Storage Backups | On | Create backup before account data changes |
+| Refresh Guard Interval | 30s | How often to scan for tokens near expiry |
+| Refresh Guard Buffer | 5m | How early to refresh before expiry |
+| Token Refresh Buffer | 5m | Refresh this long before token expiry |
+
+#### Performance & Timeouts
+
+Controls speed optimization and timeout limits.
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| Enable Fast Session Mode | Off | Use lighter request handling for faster responses |
+| Enable Parallel Probing | On | Check multiple accounts at the same time |
+| Fast Session Max Inputs | 100 | Max number of input items kept in fast mode |
+| Parallel Probe Concurrency | 3 | Maximum checks running at once |
+| Request Timeout | 60s | Max time to wait for a request |
+| Stream Stall Timeout | 45s | Max wait before stuck stream is retried |
+| Network Error Cooldown | 5s | Wait time after network errors before retry |
+| Server Error Cooldown | 10s | Wait time after server errors before retry |
+
+### Keyboard Shortcuts
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Toggle setting or open category |
+| `+` / `-` | Adjust numeric setting |
+| `S` | Save all backend changes |
+| `R` | Reset all backend settings to defaults |
+| `Q` | Cancel without saving |
+
+### Category Navigation
+
+1. Select a category from the backend settings hub
+2. Press `Enter` to open the category
+3. Navigate settings within the category
+4. Press `Q` to return to the hub (changes preserved)
+5. Navigate to another category or save all changes with `S`
+
+## Settings Persistence
+
+All settings are saved to:
+
+```
+~/.codex/multi-auth/settings.json
+```
+
+Or, if using a custom root:
+
+```
+$CODEX_MULTI_AUTH_DIR/settings.json
+```
+
+### Save Behavior
+
+- **Save (`S`)**: Writes changes to disk immediately
+- **Cancel (`Q`)**: Discards draft changes, no file modification
+- **Reset (`R`)**: Restores panel defaults, requires `S` to persist
+
+### Conflict Resolution
+
+If settings file is modified externally while editing:
+
+1. Your changes are merged with latest file contents
+2. Your panel-specific changes take precedence
+3. Other panels remain unchanged
+4. Write failures are logged but don't crash the dashboard
+
+### Retry Logic
+
+Settings writes use automatic retry on transient failures:
+
+- **EBUSY** (file busy): Retries with exponential backoff
+- **EPERM** (permission denied): Retries up to 4 times
+- **EAGAIN** (resource temporarily unavailable): Retries with delay
+- **429** (rate limited): Respects `Retry-After` header
+
+Maximum retry delay: 30 seconds
+
+## Environment Overrides
+
+Some settings can be overridden with environment variables:
+
+| Variable | Overrides | Example |
+| --- | --- | --- |
+| `CODEX_AUTH_FETCH_TIMEOUT_MS` | Request Timeout | `export CODEX_AUTH_FETCH_TIMEOUT_MS=90000` |
+| `CODEX_AUTH_STREAM_STALL_TIMEOUT_MS` | Stream Stall Timeout | `export CODEX_AUTH_STREAM_STALL_TIMEOUT_MS=60000` |
+| `CODEX_TUI_V2` | Enable TUI v2 | `export CODEX_TUI_V2=1` |
+| `CODEX_TUI_COLOR_PROFILE` | Color profile | `export CODEX_TUI_COLOR_PROFILE=truecolor` |
+| `CODEX_TUI_GLYPHS` | Glyph style | `export CODEX_TUI_GLYPHS=unicode` |
+
+Environment variables take precedence over settings file values.
+
+## Related Documentation
+
+- [Dashboard Hotkeys](/cli/dashboard-hotkeys): Complete keyboard shortcut reference
+- [Account Details](/cli/account-details): Account-level actions and information
+- [Settings Reference](/cli/settings-reference): Configuration schema and defaults
+- [Configuration Guide](/guides/configuration): Setup and customization

@@ -1,0 +1,538 @@
+---
+title: Quota Management
+description: Quota tracking, preemptive deferral, and intelligent rate limit handling
+---
+
+## Overview
+
+**Quota management** tracks your usage across OpenAI Codex's rate limit windows and proactively prevents hitting limits. The system monitors two quota windows:
+
+1. **Primary window** - Typically 2 hours
+2. **Secondary window** - Typically 7 days
+
+By tracking these in real-time, Codex Multi-Auth can rotate accounts before you hit rate limits.
+
+## Codex Quota Headers
+
+### Header Structure
+
+OpenAI Codex returns quota information in response headers (`lib/quota-probe.ts:90-147`):
+
+```http
+HTTP/1.1 200 OK
+x-codex-primary-used-percent: 65.5
+x-codex-primary-window-minutes: 120
+x-codex-primary-reset-at: 1709485800000
+x-codex-secondary-used-percent: 23.8
+x-codex-secondary-window-minutes: 10080
+x-codex-secondary-reset-at: 1709913600000
+x-codex-plan-type: team
+x-codex-active-limit: 50
+```
+
+### Parsed Quota Snapshot
+
+```typescript
+interface CodexQuotaSnapshot {
+  status: number;              // HTTP status code
+  planType?: string;           // "free", "plus", "team", "enterprise"
+  activeLimit?: number;        // Concurrent request limit
+  model: string;               // Model used for probe
+  
+  primary: {
+    usedPercent?: number;      // 0-100 (65.5 = 65.5% used)
+    windowMinutes?: number;    // Window duration (120 = 2 hours)
+    resetAtMs?: number;        // Epoch timestamp of reset
+  };
+  
+  secondary: {
+    usedPercent?: number;      // 0-100 (23.8 = 23.8% used)
+    windowMinutes?: number;    // Window duration (10080 = 7 days)
+    resetAtMs?: number;        // Epoch timestamp of reset
+  };
+}
+```
+
+## Quota Probing
+
+### Lightweight Quota Checks
+
+Probe quota without consuming credits (`lib/quota-probe.ts:326-414`):
+
+```typescript
+export async function fetchCodexQuotaSnapshot(
+  options: ProbeCodexQuotaOptions
+): Promise<CodexQuotaSnapshot> {
+  const probeBody: RequestBody = {
+    model: options.model ?? 'gpt-5-codex',
+    stream: true,
+    store: false,
+    include: ['reasoning.encrypted_content'],
+    input: [{
+      type: 'message',
+      role: 'user',
+      content: [{ type: 'input_text', text: 'quota ping' }]
+    }],
+    reasoning: { effort: 'none', summary: 'auto' },
+    text: { verbosity: 'low' }
+  };
+
+  const response = await fetch(`${CODEX_BASE_URL}/codex/responses`, {
+    method: 'POST',
+    headers: createCodexHeaders(undefined, accountId, accessToken),
+    body: JSON.stringify(probeBody)
+  });
+
+  // Parse quota headers immediately
+  const snapshot = parseQuotaSnapshotBase(response.headers, response.status);
+  
+  // Cancel stream to minimize cost
+  await response.body?.cancel();
+  
+  return { ...snapshot, model };
+}
+```
+
+**Key optimizations:**
+- **Minimal input** - "quota ping" text
+- **No reasoning** - `effort: 'none'`
+- **Low verbosity** - `verbosity: 'low'`
+- **Immediate cancellation** - Stream cancelled after headers received
+- **No storage** - `store: false`
+
+### Probe Strategies
+
+<Tabs>
+  <Tab title="Passive Tracking">
+    **Default behavior** - Extract quota from normal request headers:
+    
+    ```typescript
+    // Every request automatically captures quota
+    const response = await fetch(codexUrl, ...);
+    const snapshot = parseQuotaSnapshotBase(response.headers, response.status);
+    updateQuotaCache(accountIndex, snapshot);
+    ```
+    
+    ✅ No extra cost
+    ✅ Real-time tracking
+    ❌ Only updates during active use
+  </Tab>
+  
+  <Tab title="Active Probing">
+    **On-demand** - Explicit quota check via CLI:
+    
+    ```bash
+    # Probe all accounts
+    codex auth check --live
+    
+    # Probe specific model
+    codex auth forecast --live --model gpt-5.3-codex
+    ```
+    
+    ✅ Up-to-date quota for idle accounts
+    ✅ Supports multiple model families
+    ❌ Minimal token cost per probe
+  </Tab>
+  
+  <Tab title="Parallel Probing">
+    **Background** - Probe multiple accounts simultaneously:
+    
+    ```typescript
+    import { probeAccountsInParallel } from './lib/parallel-probe';
+    
+    const results = await probeAccountsInParallel(accounts, {
+      model: 'gpt-5-codex',
+      concurrency: 5,
+      timeoutMs: 10000
+    });
+    ```
+    
+    ✅ Fast bulk health checks
+    ✅ Configurable concurrency
+    ❌ Higher token cost for many accounts
+  </Tab>
+</Tabs>
+
+## Quota Tracking
+
+### Per-Model Quota Keys
+
+Quotas are tracked per model family (`lib/accounts/rate-limits.ts:8-24`):
+
+```typescript
+type QuotaKey = 
+  | 'codex'                  // Base family
+  | 'codex:gpt-5-codex'      // Specific model
+  | 'codex:gpt-5.3-codex';
+
+export function getQuotaKey(
+  family: ModelFamily, 
+  model?: string | null
+): QuotaKey {
+  if (!model) return family;
+  return `${family}:${model}` as QuotaKey;
+}
+```
+
+**Why per-model tracking?**
+- Different models may have different rate limits
+- Allows fine-grained rotation within model families
+- Enables model-specific quota forecasting
+
+### Rate Limit State
+
+Each account tracks rate limits per quota key:
+
+```typescript
+interface ManagedAccount {
+  rateLimitResetTimes: Record<QuotaKey, number>;
+  lastRateLimitReason?: RateLimitReason;
+}
+
+// Example state after rate limit
+const account = {
+  rateLimitResetTimes: {
+    'codex': 1709485800000,              // Resets in 2 hours
+    'codex:gpt-5-codex': 1709485800000   // Same reset time
+  },
+  lastRateLimitReason: 'primary_quota_exceeded'
+};
+```
+
+### Rate Limit Detection
+
+Parse rate limit headers from 429 responses (`lib/accounts/rate-limits.ts:73-119`):
+
+```typescript
+export function parseRateLimitReason(
+  headers: Headers
+): RateLimitReason {
+  const reason = headers.get('x-codex-rate-limit-reason')?.toLowerCase();
+  
+  if (reason?.includes('primary')) return 'primary_quota_exceeded';
+  if (reason?.includes('secondary')) return 'secondary_quota_exceeded';
+  if (reason?.includes('concurrent')) return 'concurrent_limit_exceeded';
+  
+  return 'unknown';
+}
+```
+
+## Preemptive Deferral
+
+### Quota Threshold Strategy
+
+Avoid rate limits by rotating before hitting 100% usage:
+
+```typescript
+function shouldDeferAccount(snapshot: CodexQuotaSnapshot): boolean {
+  const primaryLeft = 100 - (snapshot.primary.usedPercent ?? 0);
+  const secondaryLeft = 100 - (snapshot.secondary.usedPercent ?? 0);
+  
+  // Defer if either window > 90% used
+  return primaryLeft < 10 || secondaryLeft < 10;
+}
+```
+
+**Thresholds:**
+- **< 10% remaining** - High priority rotation
+- **< 5% remaining** - Mark account as unavailable
+- **< 1% remaining** - Emergency cooldown
+
+### Preemptive Quota Scheduler
+
+The scheduler (`lib/preemptive-quota-scheduler.ts`) automatically rotates accounts:
+
+```typescript
+class PreemptiveQuotaScheduler {
+  checkAccountQuota(account: ManagedAccount, snapshot: CodexQuotaSnapshot) {
+    const primaryLeft = 100 - (snapshot.primary.usedPercent ?? 0);
+    const secondaryLeft = 100 - (snapshot.secondary.usedPercent ?? 0);
+    
+    if (primaryLeft < 10 || secondaryLeft < 10) {
+      // Mark for deferral
+      this.markAccountDeferred(account, {
+        reason: primaryLeft < 10 ? 'primary_quota_low' : 'secondary_quota_low',
+        deferUntil: snapshot.primary.resetAtMs ?? Date.now() + 3600000
+      });
+    }
+  }
+}
+```
+
+## Quota Display
+
+### Human-Readable Formatting
+
+Quota windows are formatted for CLI display (`lib/quota-probe.ts:206-300`):
+
+```typescript
+export function formatQuotaSnapshotLine(
+  snapshot: CodexQuotaSnapshot
+): string {
+  const parts = [
+    formatWindowSummary('2h', snapshot.primary),
+    formatWindowSummary('7d', snapshot.secondary)
+  ];
+  
+  if (snapshot.planType) parts.push(`plan:${snapshot.planType}`);
+  if (snapshot.activeLimit) parts.push(`active:${snapshot.activeLimit}`);
+  if (snapshot.status === 429) parts.push('rate-limited');
+  
+  return parts.join(', ');
+}
+
+// Example output:
+// "2h 35% left (resets 14:30), 7d 78% left (resets 12:00 on Mar 08), plan:team, active:50"
+```
+
+### Dashboard View
+
+Run `codex auth` to see quota status:
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│ Account 1 (dev@example.com)                              [ACTIVE]  │
+├────────────────────────────────────────────────────────────────────┤
+│ Quota: 2h 35% left (resets 14:30), 7d 78% left (Mar 08)           │
+│ Plan: team              Active limit: 50 concurrent                │
+│ Health: ████████░░ 85/100    Last used: 2m ago                     │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+## Rate Limit Recovery
+
+### Automatic Reset Tracking
+
+Rate limits automatically clear after reset time:
+
+```typescript
+export function clearExpiredRateLimits(account: ManagedAccount): void {
+  const now = Date.now();
+  for (const [key, resetAt] of Object.entries(account.rateLimitResetTimes)) {
+    if (resetAt <= now) {
+      delete account.rateLimitResetTimes[key];
+    }
+  }
+}
+```
+
+Called automatically before every account availability check.
+
+### Reset Time Parsing
+
+Handles multiple header formats (`lib/quota-probe.ts:69-88`):
+
+```typescript
+function parseResetAtMs(headers: Headers, prefix: string): number | undefined {
+  // Method 1: Relative seconds
+  const resetAfterSeconds = parseFiniteIntHeader(
+    headers, 
+    `${prefix}-reset-after-seconds`
+  );
+  if (resetAfterSeconds && resetAfterSeconds > 0) {
+    return Date.now() + resetAfterSeconds * 1000;
+  }
+  
+  // Method 2: Absolute timestamp
+  const resetAtRaw = headers.get(`${prefix}-reset-at`);
+  if (resetAtRaw) {
+    const parsed = Date.parse(resetAtRaw.trim());
+    if (Number.isFinite(parsed)) return parsed;
+    
+    // Handle epoch timestamps (seconds vs milliseconds)
+    const epochValue = Number(resetAtRaw.trim());
+    if (Number.isFinite(epochValue) && epochValue > 0) {
+      return epochValue < 10_000_000_000 
+        ? epochValue * 1000  // Convert seconds to ms
+        : epochValue;         // Already in ms
+    }
+  }
+  
+  return undefined;
+}
+```
+
+## Quota Cache
+
+### Cache Persistence
+
+Quota snapshots are cached to disk (`lib/quota-cache.ts`):
+
+```typescript
+interface QuotaCacheEntry {
+  accountIndex: number;
+  snapshot: CodexQuotaSnapshot;
+  cachedAt: number;
+  expiresAt: number;
+}
+
+class QuotaCache {
+  save(accountIndex: number, snapshot: CodexQuotaSnapshot) {
+    const entry: QuotaCacheEntry = {
+      accountIndex,
+      snapshot,
+      cachedAt: Date.now(),
+      expiresAt: Date.now() + 300_000  // 5 minute TTL
+    };
+    this.entries.set(accountIndex, entry);
+    this.persist();
+  }
+  
+  get(accountIndex: number): CodexQuotaSnapshot | null {
+    const entry = this.entries.get(accountIndex);
+    if (!entry || entry.expiresAt < Date.now()) {
+      this.entries.delete(accountIndex);
+      return null;
+    }
+    return entry.snapshot;
+  }
+}
+```
+
+**Cache location:**
+```
+~/.codex/multi-auth/quota-cache.json
+```
+
+**Benefits:**
+- Faster CLI commands (no probe needed)
+- Quota visibility for idle accounts
+- Reduced API calls
+
+### Cache Invalidation
+
+Cache entries are invalidated:
+- After **5 minutes** (TTL)
+- On rate limit **429 response**
+- After **successful request** (updated with fresh data)
+- On **manual refresh** (`codex auth check --live`)
+
+## Wait Time Estimation
+
+### Calculate Minimum Wait
+
+When all accounts are rate-limited, estimate wait time:
+
+```typescript
+getMinWaitTimeForFamily(
+  family: ModelFamily, 
+  model?: string
+): number {
+  const now = Date.now();
+  const waitTimes: number[] = [];
+  const quotaKey = model ? `${family}:${model}` : family;
+  
+  for (const account of this.accounts) {
+    if (account.enabled === false) continue;
+    
+    const resetAt = account.rateLimitResetTimes[quotaKey];
+    if (typeof resetAt === 'number') {
+      waitTimes.push(Math.max(0, resetAt - now));
+    }
+    
+    if (account.coolingDownUntil) {
+      waitTimes.push(Math.max(0, account.coolingDownUntil - now));
+    }
+  }
+  
+  return waitTimes.length > 0 ? Math.min(...waitTimes) : 0;
+}
+```
+
+### Wait Time Formatting
+
+```typescript
+export function formatWaitTime(ms: number): string {
+  if (ms < 1000) return 'now';
+  if (ms < 60_000) return `${Math.ceil(ms / 1000)}s`;
+  if (ms < 3600_000) return `${Math.ceil(ms / 60_000)}m`;
+  return `${Math.ceil(ms / 3600_000)}h`;
+}
+
+// Examples:
+// 500 → "now"
+// 45000 → "45s"
+// 180000 → "3m"
+// 7200000 → "2h"
+```
+
+## Monitoring Commands
+
+### Check Quota Status
+
+```bash
+# Quick check (uses cache if available)
+codex auth check
+
+# Live probe (always fetches fresh quota)
+codex auth check --live
+
+# Specific model
+codex auth check --live --model gpt-5.3-codex
+
+# JSON output for automation
+codex auth check --live --json
+```
+
+### Forecast Next Account
+
+```bash
+# Predict best account for next request
+codex auth forecast
+
+# With live quota probes
+codex auth forecast --live
+
+# For specific model
+codex auth forecast --live --model gpt-5-codex
+```
+
+### Generate Quota Report
+
+```bash
+# Detailed quota report
+codex auth report
+
+# JSON format
+codex auth report --json
+```
+
+## Best Practices
+
+<CardGroup cols={2}>
+  <Card title="Monitor Primary Window" icon="clock">
+    The 2-hour window fills fastest. Keep an eye on primary quota usage and add accounts before hitting limits.
+  </Card>
+  
+  <Card title="Use Live Probes Sparingly" icon="bolt">
+    Live probes consume minimal tokens but add up. Use passive tracking for normal operation, live probes for troubleshooting.
+  </Card>
+  
+  <Card title="Set Up Multiple Accounts" icon="users">
+    Having 3-5 accounts provides good rotation headroom. More accounts = more total quota.
+  </Card>
+  
+  <Card title="Check After Rate Limits" icon="triangle-exclamation">
+    If you hit a rate limit, run `codex auth check --live` to see which accounts are still available.
+  </Card>
+</CardGroup>
+
+## Related Concepts
+
+<CardGroup cols={2}>
+  <Card title="Account Rotation" icon="arrows-rotate" href="/concepts/account-rotation">
+    Learn how quota tracking influences account selection
+  </Card>
+  
+  <Card title="Multi-Account OAuth" icon="key" href="/concepts/multi-account-oauth">
+    Understand how to authenticate multiple accounts
+  </Card>
+  
+  <Card title="Commands Reference" icon="terminal" href="/cli/overview">
+    View all quota-related commands
+  </Card>
+  
+  <Card title="Settings Reference" icon="sliders" href="/cli/settings-reference">
+    Configure quota thresholds and behavior
+  </Card>
+</CardGroup>

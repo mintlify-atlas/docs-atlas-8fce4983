@@ -1,0 +1,443 @@
+---
+title: codex auth report
+description: Generate a comprehensive health report for all accounts
+---
+
+Generate a detailed health and status report for all accounts, including flagged accounts, quota usage, and diagnostic information.
+
+## Usage
+
+```bash
+codex auth report [--live] [--json] [--model <model>] [--out <path>]
+```
+
+<ParamField path="--live" type="boolean" default="false">
+  Perform live quota probes for all accounts before generating the report.
+</ParamField>
+
+<ParamField path="--json" type="boolean" default="false">
+  Output machine-readable JSON instead of human-friendly text.
+</ParamField>
+
+<ParamField path="--model" type="string" default="gpt-5-codex">
+  Model to use for live quota probes (only with `--live`).
+</ParamField>
+
+<ParamField path="--out" type="string">
+  Write report to file instead of stdout.
+</ParamField>
+
+## Example Output
+
+### Text Report (Default)
+
+```
+=== Codex Multi-Auth Health Report ===
+Generated: 2026-03-03 14:30:00 UTC
+Mode: Live probe enabled (model: gpt-5-codex)
+
+Summary:
+  Total accounts: 5
+  Active accounts: 4
+  Flagged accounts: 1
+  Current account: alice@example.com
+
+Active Accounts:
+  1. alice@example.com
+     Status: Healthy
+     Health score: 100
+     Quota (5h): 95% remaining
+     Quota (7d): 87% remaining
+     Last used: 15 minutes ago
+
+  2. bob@work.com
+     Status: Healthy
+     Health score: 85
+     Quota (5h): 45% remaining
+     Quota (7d): 67% remaining
+     Last used: 2 hours ago
+
+  3. carol@personal.com
+     Status: Warning (refresh token aging)
+     Health score: 70
+     Quota (5h): 12% remaining
+     Quota (7d): 34% remaining
+     Last used: 3 days ago
+
+  4. dave@test.com
+     Status: Rate-limited
+     Health score: 40
+     Rate limit: Resets in 1h 30m
+     Last used: 45 minutes ago
+
+Flagged Accounts:
+  1. eve@broken.com
+     Flagged: 2 days ago
+     Reason: invalid_grant
+     Last verified: 1 day ago
+     Verification count: 3
+
+Recommendation:
+  Use account: alice@example.com (index 1)
+  Reason: Highest quota, best health score
+```
+
+### JSON Report
+
+```bash
+codex auth report --live --json
+```
+
+```json
+{
+  "generatedAt": 1709478600000,
+  "mode": "live",
+  "model": "gpt-5-codex",
+  "summary": {
+    "totalAccounts": 5,
+    "activeAccounts": 4,
+    "flaggedAccounts": 1,
+    "currentAccountEmail": "alice@example.com"
+  },
+  "accounts": [
+    {
+      "index": 0,
+      "accountId": "user-abc123",
+      "email": "alice@example.com",
+      "status": "healthy",
+      "healthScore": 100,
+      "quota5hPercent": 95,
+      "quota7dPercent": 87,
+      "rateLimited": false,
+      "disabled": false,
+      "lastUsed": 1709477700000,
+      "addedAt": 1707264000000
+    },
+    {
+      "index": 1,
+      "accountId": "user-def456",
+      "email": "bob@work.com",
+      "status": "healthy",
+      "healthScore": 85,
+      "quota5hPercent": 45,
+      "quota7dPercent": 67,
+      "rateLimited": false,
+      "disabled": false,
+      "lastUsed": 1709471400000
+    }
+  ],
+  "flagged": [
+    {
+      "accountId": "user-xyz789",
+      "email": "eve@broken.com",
+      "flaggedAt": 1709305800000,
+      "flaggedReason": "invalid_grant",
+      "lastVerified": 1709392200000,
+      "verificationCount": 3
+    }
+  ],
+  "recommendation": {
+    "index": 0,
+    "email": "alice@example.com",
+    "reasoning": "Highest quota, best health score"
+  }
+}
+```
+
+## Report Sections
+
+### Summary
+
+Overview of account pool:
+
+- Total accounts (active + flagged)
+- Active account count
+- Flagged account count
+- Current active account
+
+### Active Accounts
+
+Detailed per-account information:
+
+- Account index and identifier (email/ID)
+- Status (healthy, warning, rate-limited, disabled)
+- Health score (0-100)
+- Quota percentages (5h and 7d windows)
+- Rate limit status and reset time
+- Last-used timestamp
+- Added-at timestamp
+
+### Flagged Accounts
+
+Information about broken accounts:
+
+- Identifier (email/ID)
+- Flagged timestamp
+- Reason for flagging (e.g., `invalid_grant`)
+- Last verification attempt timestamp
+- Total verification count
+
+### Recommendation
+
+Best account to use next:
+
+- Account index
+- Identifier
+- Reasoning (why this account is recommended)
+
+## Status Classifications
+
+<ParamField path="healthy" type="status">
+  Account is working with no issues.
+</ParamField>
+
+<ParamField path="warning" type="status">
+  Account works but has potential issues (aging refresh token, low quota).
+</ParamField>
+
+<ParamField path="rate-limited" type="status">
+  Account hit rate limits and is cooling down.
+</ParamField>
+
+<ParamField path="disabled" type="status">
+  Account is manually disabled via dashboard.
+</ParamField>
+
+<ParamField path="error" type="status">
+  Account has hard failures (expired/invalid tokens).
+</ParamField>
+
+## Examples
+
+### Basic report
+
+```bash
+codex auth report
+```
+
+### Live report with quota
+
+```bash
+codex auth report --live
+```
+
+### Save to file
+
+```bash
+codex auth report --live --json --out health-report.json
+```
+
+### Daily health snapshot
+
+```bash
+#!/bin/bash
+DATE=$(date +%Y-%m-%d)
+codex auth report --live --json --out reports/health-$DATE.json
+```
+
+### Extract specific metrics
+
+```bash
+# Get current account health score
+codex auth report --json | jq '.accounts[] | select(.email == "alice@example.com") | .healthScore'
+
+# Count rate-limited accounts
+codex auth report --json | jq '[.accounts[] | select(.rateLimited == true)] | length'
+
+# List all healthy accounts
+codex auth report --json | jq -r '.accounts[] | select(.status == "healthy") | .email'
+```
+
+### Monitoring integration
+
+```bash
+#!/bin/bash
+# Prometheus metrics exporter
+REPORT=$(codex auth report --live --json)
+
+echo "codex_total_accounts $(echo $REPORT | jq '.summary.totalAccounts')"
+echo "codex_active_accounts $(echo $REPORT | jq '.summary.activeAccounts')"
+echo "codex_flagged_accounts $(echo $REPORT | jq '.summary.flaggedAccounts')"
+
+echo $REPORT | jq -r '.accounts[] | "codex_health_score{email=\"" + .email + "\"} " + (.healthScore | tostring)'
+```
+
+## Performance
+
+### Default Mode (No Live Probe)
+
+- **Speed**: ~100-200ms
+- **Network**: No API calls
+- **Data source**: Last health check cache
+
+### Live Mode
+
+- **Speed**: ~2-3 seconds per account
+- **Network**: 1 API request per account
+- **Data source**: Real-time API probes
+
+For 10 accounts with `--live`: ~30 seconds total.
+
+## Output Destinations
+
+### stdout (Default)
+
+```bash
+codex auth report
+# Prints to terminal
+```
+
+### File (`--out`)
+
+```bash
+codex auth report --json --out report.json
+# Writes to report.json, nothing to stdout
+```
+
+### Pipe to tools
+
+```bash
+codex auth report --json | jq '.accounts | length'
+codex auth report --json | gzip > report.json.gz
+```
+
+## Exit Codes
+
+<ParamField path="0" type="exit code">
+  Report generated successfully.
+</ParamField>
+
+<ParamField path="1" type="exit code">
+  Report generation failed (no accounts, storage error, write failure).
+</ParamField>
+
+## Troubleshooting
+
+### File Write Fails
+
+```bash
+# Check directory exists
+mkdir -p reports/
+codex auth report --json --out reports/health.json
+
+# Check permissions
+ls -la reports/
+chmod 755 reports/
+```
+
+### Live Probe Times Out
+
+```bash
+# Increase timeout
+CODEX_AUTH_FETCH_TIMEOUT_MS=30000 codex auth report --live
+```
+
+### JSON Parse Error
+
+Ensure `--json` flag is set:
+
+```bash
+codex auth report --json | jq .
+```
+
+### Missing Quota Data
+
+Run with `--live` to fetch fresh data:
+
+```bash
+codex auth report --live --json
+```
+
+## Use Cases
+
+### Daily health monitoring
+
+```bash
+# Cron: Daily at 8 AM
+0 8 * * * codex auth report --live --json --out ~/logs/health-$(date +\%Y-\%m-\%d).json
+```
+
+### Pre-deployment checks
+
+```bash
+#!/bin/bash
+REPORT=$(codex auth report --live --json)
+HEALTHY=$(echo $REPORT | jq '[.accounts[] | select(.status == "healthy")] | length')
+
+if [ $HEALTHY -lt 2 ]; then
+  echo "Not enough healthy accounts for deployment"
+  exit 1
+fi
+```
+
+### Incident response
+
+```bash
+# Capture full state during incident
+codex auth report --live --json --out incident-$(date +%s).json
+codex auth forecast --live --json >> incident-$(date +%s).json
+```
+
+### Capacity planning
+
+```bash
+# Weekly aggregate
+for i in {0..6}; do
+  DATE=$(date -d "-$i days" +%Y-%m-%d)
+  if [ -f "reports/health-$DATE.json" ]; then
+    echo "$DATE: $(jq '.summary.activeAccounts' reports/health-$DATE.json)"
+  fi
+done
+```
+
+## Related Commands
+
+- [`codex auth check`](/cli/auth-check) - Update health scores before reporting
+- [`codex auth forecast`](/cli/auth-forecast) - Get recommendation only
+- [`codex auth status`](/cli/auth-status) - Quick status without details
+- [`codex auth verify-flagged`](/cli/auth-verify-flagged) - Check flagged accounts
+- [`codex auth fix`](/cli/auth-fix) - Repair issues found in report
+
+## Report Schema (JSON)
+
+Full JSON schema:
+
+```typescript
+interface HealthReport {
+  generatedAt: number;          // Unix timestamp (ms)
+  mode: 'default' | 'live';     // Probe mode
+  model?: string;                // Model used for live probes
+  summary: {
+    totalAccounts: number;
+    activeAccounts: number;
+    flaggedAccounts: number;
+    currentAccountEmail?: string;
+  };
+  accounts: Array<{
+    index: number;
+    accountId?: string;
+    email?: string;
+    status: 'healthy' | 'warning' | 'rate-limited' | 'disabled' | 'error';
+    healthScore: number;         // 0-100
+    quota5hPercent?: number;     // 0-100 (remaining)
+    quota7dPercent?: number;     // 0-100 (remaining)
+    rateLimited: boolean;
+    disabled: boolean;
+    lastUsed?: number;           // Unix timestamp (ms)
+    addedAt?: number;            // Unix timestamp (ms)
+  }>;
+  flagged: Array<{
+    accountId?: string;
+    email?: string;
+    flaggedAt: number;           // Unix timestamp (ms)
+    flaggedReason: string;
+    lastVerified?: number;       // Unix timestamp (ms)
+    verificationCount: number;
+  }>;
+  recommendation?: {
+    index: number;
+    email?: string;
+    reasoning: string;
+  };
+}
+```

@@ -1,0 +1,428 @@
+---
+title: Security Practices
+description: Security model, OAuth security, vulnerability reporting, and operator security practices for Codex Multi-Auth
+---
+
+Codex Multi-Auth handles OAuth credentials and account metadata locally. This page outlines the security model, best practices, and vulnerability reporting procedures.
+
+## Supported Versions
+
+Security updates are provided for the current maintained release line:
+
+| Version line | Status |
+|--------------|--------|
+| `0.x` latest | Supported |
+| pre-`0.x` historical branches | Not supported |
+
+## Security Model
+
+### Core Security Controls
+
+- **PKCE-based OAuth flow** - Proof Key for Code Exchange prevents authorization code interception
+- **Local-first storage** - All credentials stored under `~/.codex/multi-auth` (or `CODEX_MULTI_AUTH_DIR`)
+- **Refresh-token lifecycle management** - Automatic rotation with health isolation
+- **No project-owned telemetry backend** - No data leaves your machine except to required OAuth/API endpoints
+
+### OAuth Flow Security
+
+#### PKCE (Proof Key for Code Exchange)
+
+Codex Multi-Auth uses PKCE to prevent authorization code interception attacks:
+
+```typescript
+// lib/auth/auth.ts
+import { randomBytes } from 'node:crypto';
+
+// Generate cryptographically secure code verifier
+function generateCodeVerifier(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+// Derive code challenge from verifier
+function generateCodeChallenge(verifier: string): string {
+  return createHash('sha256')
+    .update(verifier)
+    .digest('base64url');
+}
+```
+
+**Flow**:
+
+1. Client generates random `code_verifier`
+2. Client derives `code_challenge` = SHA256(code_verifier)
+3. Authorization request includes `code_challenge` and `code_challenge_method=S256`
+4. Token exchange includes original `code_verifier`
+5. Server verifies: SHA256(code_verifier) == stored code_challenge
+
+#### OAuth Endpoints
+
+```typescript
+// lib/auth/auth.ts
+export const CLIENT_ID = 'Iv1.b507a08c87ecfe98';
+export const AUTHORIZE_URL = 'https://auth.openai.com/authorize';
+export const TOKEN_URL = 'https://auth.openai.com/oauth/token';
+export const REDIRECT_URI = 'http://127.0.0.1:1455/auth/callback';
+export const SCOPE = 'openid profile email offline_access';
+```
+
+**Why 127.0.0.1 instead of localhost?**
+
+- `127.0.0.1` bypasses DNS resolution, reducing attack surface
+- Prevents DNS rebinding attacks
+- Faster connection establishment
+
+### Token Storage Security
+
+All OAuth tokens are stored locally with restricted permissions:
+
+```bash
+# Default storage location
+~/.codex/multi-auth/
+├── openai-codex-accounts.json        # Refresh tokens (primary pool)
+├── openai-codex-flagged-accounts.json # Accounts with auth failures
+├── quota-cache.json                   # Quota snapshots (no tokens)
+└── settings.json                      # Configuration (no tokens)
+```
+
+**File permissions**: Readable/writable only by the user (Unix: `0600`, Windows: user-only ACL)
+
+### JWT Token Handling
+
+```typescript
+// lib/auth/auth.ts
+export function decodeJWT(token: string): unknown {
+  const parts = token.split('.');
+  if (parts.length !== 3) {
+    throw new Error('Invalid JWT format');
+  }
+  
+  const payload = parts[1];
+  if (!payload) {
+    throw new Error('Missing JWT payload');
+  }
+  
+  // No signature verification (tokens are from trusted OAuth server)
+  return JSON.parse(Buffer.from(payload, 'base64url').toString('utf-8'));
+}
+```
+
+<Warning>
+**Why no signature verification?**
+
+Tokens are obtained directly from OpenAI's OAuth server over HTTPS. The HTTPS connection provides transport-level integrity. We decode JWTs to extract metadata (user ID, expiration) but never accept JWTs from untrusted sources.
+</Warning>
+
+## Operator Security Practices
+
+### Credential Hygiene
+
+<Steps>
+  <Step title="Never Share Storage Directories">
+    ```bash
+    # DO NOT commit these files or directories
+    ~/.codex/
+    ~/.codex/multi-auth/
+    
+    # Add to .gitignore
+    .codex/
+    *.json  # If in project directory
+    ```
+  </Step>
+
+  <Step title="Review Connected Apps Periodically">
+    Visit [ChatGPT Settings → Apps](https://chatgpt.com/settings) and audit authorized applications.
+    
+    Revoke access for:
+    - Unrecognized applications
+    - Applications you no longer use
+    - Suspicious authorization timestamps
+  </Step>
+
+  <Step title="Rotate Accounts After Compromise">
+    ```bash
+    # Remove compromised account
+    codex auth remove user@example.com
+    
+    # Revoke access in ChatGPT settings
+    # Then re-authenticate
+    codex auth add
+    ```
+  </Step>
+</Steps>
+
+### Sensitive Logging Controls
+
+Codex Multi-Auth supports debug logging for troubleshooting. **Use with caution**:
+
+```bash
+# Metadata logging (safe for most use cases)
+ENABLE_PLUGIN_REQUEST_LOGGING=1 codex generate ...
+
+# Full request/response body logging (SENSITIVE)
+CODEX_PLUGIN_LOG_BODIES=1 codex generate ...
+```
+
+**What gets logged**:
+
+| Environment Variable | Logs | Risk |
+|---------------------|------|------|
+| `ENABLE_PLUGIN_REQUEST_LOGGING=1` | Request metadata (method, URL, headers) | Low - No prompt/response content |
+| `CODEX_PLUGIN_LOG_BODIES=1` | Raw request/response bodies | **High** - Contains prompts, responses, reasoning |
+
+<Warning>
+**Body logging security risks**:
+
+- Logs may contain sensitive prompts or proprietary code
+- Response bodies include reasoning and assistant content
+- Log files persist on disk until manually deleted
+- Treat body logs as highly sensitive data
+</Warning>
+
+**After troubleshooting**:
+
+```bash
+# Delete sensitive logs
+rm -rf ~/.codex/multi-auth/logs/codex-plugin/
+```
+
+## Vulnerability Reporting
+
+### Private Disclosure Process
+
+**DO NOT open public issues for security vulnerabilities.**
+
+<Steps>
+  <Step title="Contact Maintainer Privately">
+    Use the GitHub profile contact channel or security advisory feature:
+    
+    ```
+    https://github.com/ndycode/codex-multi-auth/security/advisories/new
+    ```
+  </Step>
+
+  <Step title="Include Required Information">
+    - **Vulnerability description** - What is the security issue?
+    - **Reproduction steps** - How can the maintainer reproduce it?
+    - **Impact assessment** - What are the potential consequences?
+    - **Suggested mitigation** (optional) - Proposed fix or workaround
+  </Step>
+
+  <Step title="Wait for Response">
+    Target response time: **within 48 hours**
+    
+    The maintainer will:
+    - Acknowledge receipt
+    - Validate the vulnerability
+    - Coordinate disclosure timing
+  </Step>
+</Steps>
+
+### Responsible Disclosure
+
+- **Fixes are prepared before public disclosure** - Patches are developed and tested privately
+- **Reporter attribution** - Credit is provided unless anonymity is requested
+- **Coordinated timing** - Disclosure is scheduled to minimize user risk
+
+### Example Vulnerability Report
+
+```markdown
+## Vulnerability Description
+The OAuth state parameter is not validated during callback processing,
+allowing CSRF attacks.
+
+## Reproduction Steps
+1. Start OAuth flow: `codex auth add`
+2. Capture authorization URL
+3. Modify `state` parameter in callback URL
+4. Complete flow with modified state
+5. Observe successful authentication despite state mismatch
+
+## Impact Assessment
+An attacker who can trick a user into clicking a malicious callback
+URL could complete an OAuth flow with the attacker's authorization code,
+linking the victim's Codex Multi-Auth installation to the attacker's
+OpenAI account.
+
+## Suggested Mitigation
+Store the state parameter in memory during authorization and validate
+it matches the callback state before exchanging the authorization code.
+```
+
+## Out of Scope
+
+The following are **not treated as vulnerabilities**:
+
+- **OpenAI platform outages** - Report to OpenAI, not this project
+- **Account/subscription entitlement limitations** - Expected behavior based on your OpenAI plan
+- **Expected upstream rate limiting** - OpenAI enforces rate limits; this is intentional
+- **Requests to bypass OpenAI terms or controls** - Will not be implemented
+
+## Dependency and Release Hygiene
+
+Before every release and after dependency changes:
+
+```bash
+# Security audit (production dependencies only, high severity+)
+npm run audit:prod
+
+# Security audit (all dependencies, high severity+)
+npm run audit:all
+
+# Dev dependency audit with allowlist
+npm run audit:dev:allowlist
+
+# Full quality gate
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+### Dependency Security Policies
+
+- **Production dependencies**: Zero high/critical vulnerabilities allowed
+- **Dev dependencies**: Allowlisted exceptions documented in `scripts/audit-dev-allowlist.js`
+- **Automatic updates**: Dependabot configured for security patches
+- **Version pinning**: `package-lock.json` committed to ensure reproducible builds
+
+## Data Privacy
+
+Codex Multi-Auth is **local-first**. All data is stored locally on your machine.
+
+### Network Destinations
+
+All network requests go to:
+
+- **OpenAI OAuth endpoints** (`auth.openai.com`) - Token exchange and refresh
+- **OpenAI Codex/ChatGPT backend** - API requests during code generation
+- **GitHub raw/releases endpoints** - Prompt template sync (cached with ETag)
+
+**No telemetry backend** - This project does not send usage data to any third-party analytics service.
+
+### Data Cleanup
+
+To completely remove all Codex Multi-Auth data:
+
+<Tabs>
+  <Tab title="Bash/Linux/macOS">
+    ```bash
+    # Remove all plugin data
+    rm -f ~/.codex/multi-auth/settings.json
+    rm -f ~/.codex/multi-auth/openai-codex-accounts.json
+    rm -f ~/.codex/multi-auth/openai-codex-flagged-accounts.json
+    rm -f ~/.codex/multi-auth/quota-cache.json
+    rm -rf ~/.codex/multi-auth/logs/codex-plugin
+    rm -rf ~/.codex/multi-auth/cache
+    
+    # If using override environment variables
+    [ -n "${CODEX_MULTI_AUTH_DIR:-}" ] && \
+      rm -rf "$CODEX_MULTI_AUTH_DIR"
+    ```
+  </Tab>
+  
+  <Tab title="PowerShell/Windows">
+    ```powershell
+    # Remove all plugin data
+    Remove-Item "$HOME\.codex\multi-auth\settings.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$HOME\.codex\multi-auth\openai-codex-accounts.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$HOME\.codex\multi-auth\openai-codex-flagged-accounts.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$HOME\.codex\multi-auth\quota-cache.json" -Force -ErrorAction SilentlyContinue
+    Remove-Item "$HOME\.codex\multi-auth\logs\codex-plugin" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item "$HOME\.codex\multi-auth\cache" -Recurse -Force -ErrorAction SilentlyContinue
+    
+    # If using override environment variables
+    if ($env:CODEX_MULTI_AUTH_DIR) {
+      Remove-Item "$env:CODEX_MULTI_AUTH_DIR\*" -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## OAuth Security Best Practices
+
+### Refresh Token Rotation
+
+Codex Multi-Auth automatically rotates refresh tokens to minimize exposure:
+
+```typescript
+// lib/auth/auth.ts
+export async function refreshAccessToken(
+  refreshToken: string
+): Promise<TokenResult> {
+  const response = await fetch(TOKEN_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: CLIENT_ID,
+    }),
+  });
+  
+  const data = await response.json();
+  
+  // If new refresh token provided, update storage
+  if (data.refresh_token) {
+    await updateRefreshToken(data.refresh_token);
+  }
+  
+  return { success: true, accessToken: data.access_token };
+}
+```
+
+### Account Health Isolation
+
+Accounts with repeated failures are isolated to prevent cascading issues:
+
+```typescript
+// lib/accounts.ts
+class HealthScoreTracker {
+  recordFailure(accountIndex: number): void {
+    const score = this.getScore(accountIndex);
+    const newScore = Math.max(
+      score + this.config.failureDelta,  // Negative delta
+      this.config.minScore
+    );
+    this.scores.set(accountIndex, newScore);
+    this.consecutiveFailures.set(
+      accountIndex,
+      (this.consecutiveFailures.get(accountIndex) ?? 0) + 1
+    );
+  }
+}
+```
+
+**Security benefit**: A compromised or revoked account won't block the entire plugin - rotation will skip it.
+
+## Policy Responsibility
+
+Usage must comply with OpenAI's terms:
+
+- [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/)
+- [OpenAI Privacy Policy](https://openai.com/policies/privacy-policy/)
+
+**This project enforces policy boundaries**:
+
+- No token scraping or cookie extraction
+- No rate limit circumvention
+- No commercial multi-user resale features
+
+Contributions that violate these boundaries will be declined.
+
+## Questions
+
+For **non-vulnerability** security questions, open a GitHub Discussion:
+
+```
+https://github.com/ndycode/codex-multi-auth/discussions
+```
+
+<Info>
+**Disclaimer**: This project is not affiliated with OpenAI. For OpenAI platform security concerns, contact OpenAI directly.
+</Info>
+
+## Related Documentation
+
+- [Contributing Guidelines](/advanced/contributing) - Development setup and PR process
+- [Testing Guidelines](/advanced/testing) - Security testing practices
+- [Storage Paths Reference](/cli/storage-paths) - Where credentials are stored

@@ -1,0 +1,345 @@
+---
+title: 'Storage Paths'
+description: 'Storage locations and file paths used by Codex Multi-Auth'
+---
+
+## Overview
+
+Codex Multi-Auth uses a structured directory layout for storing accounts, settings, cache, and logs. This page documents all storage paths and how they are resolved.
+
+---
+
+## Root Directory
+
+### Canonical Root
+
+**Default:** `~/.codex/multi-auth`
+
+This is the primary storage location for all Codex Multi-Auth data.
+
+### Environment Override
+
+<ParamField path="CODEX_MULTI_AUTH_DIR" type="string">
+  Override the entire multi-auth root directory.
+  
+  **Example:**
+  ```bash
+  export CODEX_MULTI_AUTH_DIR="/custom/path"
+  ```
+</ParamField>
+
+### Codex Home
+
+**Default:** `~/.codex`
+
+The Codex home directory (used by official Codex CLI).
+
+<ParamField path="CODEX_HOME" type="string">
+  Override the Codex home directory.
+  
+  When set, the default multi-auth directory becomes `$CODEX_HOME/multi-auth`
+</ParamField>
+
+---
+
+## Core Files
+
+### Unified Settings
+
+| File | Path |
+|------|------|
+| **Settings** | `~/.codex/multi-auth/settings.json` |
+| **Description** | Unified configuration file containing `pluginConfig` and `dashboardDisplaySettings` |
+
+**Version:** 1 (current)
+
+**Structure:**
+```json
+{
+  "version": 1,
+  "pluginConfig": { /* ... */ },
+  "dashboardDisplaySettings": { /* ... */ }
+}
+```
+
+### Global Accounts
+
+| File | Path |
+|------|------|
+| **Accounts** | `~/.codex/multi-auth/openai-codex-accounts.json` |
+| **Backup** | `~/.codex/multi-auth/openai-codex-accounts.json.bak` |
+| **Write-Ahead Log** | `~/.codex/multi-auth/openai-codex-accounts.json.wal` |
+| **Flagged** | `~/.codex/multi-auth/openai-codex-flagged-accounts.json` |
+
+**Format:** V3 (current, includes health scores and metadata)
+
+**Backup behavior:** When `storageBackupEnabled: true`, `.bak` files are created before writes.
+
+### Cache and Logs
+
+| Directory | Path |
+|-----------|------|
+| **Cache** | `~/.codex/multi-auth/cache/` |
+| **Quota Cache** | `~/.codex/multi-auth/quota-cache.json` |
+| **Logs** | `~/.codex/multi-auth/logs/codex-plugin/` |
+
+---
+
+## Per-Project Accounts
+
+When `perProjectAccounts: true` (default), accounts are stored per-project.
+
+### Project Account Path
+
+**Format:** `~/.codex/multi-auth/projects/<project-key>/openai-codex-accounts.json`
+
+### Project Key Derivation
+
+The `<project-key>` is computed as:
+
+```
+<sanitized-name>-<hash-prefix>
+```
+
+Where:
+- `<sanitized-name>` = project folder name (max 40 chars, sanitized)
+- `<hash-prefix>` = first 12 chars of SHA-256 hash of normalized project path
+
+**Example:**
+- Project path: `/home/user/projects/my-app`
+- Project name: `my-app`
+- Hash: `sha256("/home/user/projects/my-app")` → `a1b2c3d4e5f6...`
+- Project key: `my-app-a1b2c3d4e5f6`
+- Full path: `~/.codex/multi-auth/projects/my-app-a1b2c3d4e5f6/openai-codex-accounts.json`
+
+### Platform-Specific Normalization
+
+**Windows:** Paths are lowercased before hashing to ensure case-insensitive matching.
+
+**Unix/Linux/macOS:** Paths are case-sensitive.
+
+---
+
+## Git Worktree Behavior
+
+Codex Multi-Auth intelligently handles Git worktrees to ensure linked worktrees share the same account pool.
+
+### Standard Repository
+
+**Identity:** Project root path
+
+Accounts are keyed by the project's root directory.
+
+### Linked Worktrees
+
+**Identity:** Shared repository root (commondir)
+
+All linked worktrees for the same repository share one account pool.
+
+**Detection:**
+1. Check if `.git` is a file (linked worktree indicator)
+2. Parse `.git` file to extract `gitdir` path
+3. Read `gitdir/commondir` to find shared repository root
+4. Validate `commondir` references back to `gitdir`
+5. Use `commondir` as the storage identity
+
+**Example:**
+```
+Main repo: /home/user/project/.git
+Worktree 1: /home/user/worktree-1/.git → points to /home/user/project/.git/worktrees/worktree-1
+Worktree 2: /home/user/worktree-2/.git → points to /home/user/project/.git/worktrees/worktree-2
+
+All worktrees share: /home/user/project (commondir)
+Project key derived from: /home/user/project
+```
+
+### Non-Git Directories
+
+**Identity:** Detected project path
+
+For non-Git projects, the identity is the project root as detected by the plugin.
+
+---
+
+## Codex CLI Integration
+
+### Codex CLI Files
+
+These files are **managed by the official Codex CLI** (not Multi-Auth):
+
+| File | Path | Owner |
+|------|------|-------|
+| **CLI Accounts** | `~/.codex/accounts.json` | Codex CLI |
+| **CLI Auth** | `~/.codex/auth.json` | Codex CLI |
+
+**Do not manually edit these files.** They are maintained by the official CLI.
+
+### Environment Overrides
+
+<ParamField path="CODEX_CLI_ACCOUNTS_PATH" type="string">
+  Override Codex CLI accounts file path.
+  
+  **Default:** `~/.codex/accounts.json`
+</ParamField>
+
+<ParamField path="CODEX_CLI_AUTH_PATH" type="string">
+  Override Codex CLI auth file path.
+  
+  **Default:** `~/.codex/auth.json`
+</ParamField>
+
+---
+
+## Session Recovery
+
+Session recovery files are stored separately:
+
+| Type | Path |
+|------|------|
+| **Storage Base** | `$XDG_DATA_HOME/codex/storage` or `~/.local/share/codex/storage` |
+| **Messages** | `$XDG_DATA_HOME/codex/storage/message/` |
+| **Parts** | `$XDG_DATA_HOME/codex/storage/part/` |
+
+**Note:** Uses XDG Base Directory specification on Linux/macOS.
+
+---
+
+## Legacy Compatibility
+
+Older installations may have files in legacy locations that are still read during migration:
+
+### Legacy Directories
+
+| Location | Status |
+|----------|--------|
+| `~/DevTools/config/codex/` | Migration-only |
+| `~/.codex/codex-multi-auth-config.json` | Legacy config (pre-unified settings) |
+| `~/.codex/openai-codex-auth-config.json` | Legacy config (pre-unified settings) |
+
+**Migration:** On first run with a legacy setup, Multi-Auth will:
+1. Detect legacy config files
+2. Read existing settings
+3. Migrate to `settings.json` on next save
+4. Emit one-time warnings about legacy paths
+
+---
+
+## Path Resolution Summary
+
+### Resolution Order
+
+1. **Environment override** (if set)
+2. **Primary canonical path** (if exists)
+3. **Fallback locations** (for migration)
+4. **Default path** (if nothing exists)
+
+### Multi-Auth Directory Resolution
+
+```typescript
+// Priority order:
+1. $CODEX_MULTI_AUTH_DIR (if set)
+2. Account-containing candidates:
+   - $CODEX_HOME/multi-auth (if has accounts)
+   - ~/DevTools/config/codex/multi-auth (if has accounts)
+   - ~/.codex/multi-auth (if has accounts)
+3. Signal-containing candidates (settings/cache)
+4. Default: $CODEX_HOME/multi-auth
+```
+
+### Account File Resolution (Per-Project Mode)
+
+```typescript
+// When perProjectAccounts: true
+1. Detect project root (Git repo or workspace)
+2. Resolve worktree identity (for linked worktrees)
+3. Derive project key (sanitized name + hash)
+4. Load: ~/.codex/multi-auth/projects/<project-key>/openai-codex-accounts.json
+
+// Fallback to global if project detection fails
+Global: ~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+---
+
+## Verification Commands
+
+Check current storage paths:
+
+```bash
+codex auth status
+```
+
+List all accounts (shows active storage location):
+
+```bash
+codex auth list
+```
+
+---
+
+## Directory Structure Example
+
+```
+~/.codex/
+├── multi-auth/                    # Multi-Auth root
+│   ├── settings.json              # Unified settings (v1)
+│   ├── openai-codex-accounts.json # Global accounts (V3)
+│   ├── openai-codex-accounts.json.bak
+│   ├── openai-codex-accounts.json.wal
+│   ├── openai-codex-flagged-accounts.json
+│   ├── quota-cache.json
+│   ├── projects/                  # Per-project accounts
+│   │   ├── my-app-a1b2c3d4e5f6/
+│   │   │   └── openai-codex-accounts.json
+│   │   ├── another-project-f6e5d4c3b2a1/
+│   │   │   └── openai-codex-accounts.json
+│   ├── cache/                     # Cache directory
+│   │   └── prompts/
+│   └── logs/                      # Log directory
+│       └── codex-plugin/
+│           ├── 2026-03-03.log
+│           └── 2026-03-02.log
+├── accounts.json                  # Codex CLI accounts
+└── auth.json                      # Codex CLI auth
+
+~/.local/share/codex/storage/     # Session recovery (XDG)
+├── message/
+└── part/
+```
+
+---
+
+## Security Considerations
+
+### Sensitive Files
+
+The following files contain **sensitive authentication data**:
+
+- `openai-codex-accounts.json` (access tokens, refresh tokens)
+- `settings.json` (may contain credentials)
+- `auth.json` (Codex CLI credentials)
+- All `.wal` and `.bak` files
+
+**Recommendations:**
+- Ensure proper file permissions (600 or 644)
+- Do not commit to version control
+- Include in `.gitignore`
+- Back up securely if needed
+
+### File Permissions
+
+On Unix-like systems, ensure restrictive permissions:
+
+```bash
+chmod 600 ~/.codex/multi-auth/openai-codex-accounts.json
+chmod 600 ~/.codex/multi-auth/settings.json
+```
+
+---
+
+## Related
+
+- [Settings Reference](/cli/settings-reference)
+- [Environment Variables](/cli/environment-variables)
+- [Configuration Guide](/guides/configuration)
+- [Security Practices](/advanced/security)

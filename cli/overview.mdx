@@ -1,0 +1,127 @@
+---
+title: CLI Commands Overview
+description: Complete command reference for the codex-multi-auth CLI toolkit
+---
+
+The `codex-multi-auth` CLI provides a comprehensive set of commands for managing multiple ChatGPT accounts, monitoring health, and automating account operations.
+
+## Command Family
+
+All commands use the canonical `codex auth ...` syntax:
+
+```bash
+codex auth <command> [options]
+```
+
+### Compatibility Aliases
+
+The following aliases are also supported for backward compatibility:
+
+- `codex multi auth ...`
+- `codex multi-auth ...`
+- `codex multiauth ...`
+
+## Command Categories
+
+### Primary Commands
+
+Core operations for daily account management:
+
+| Command | Purpose |
+| --- | --- |
+| [`codex auth login`](/cli/auth-login) | Open interactive auth dashboard |
+| [`codex auth list`](/cli/auth-list) | List saved accounts and active account |
+| [`codex auth status`](/cli/auth-status) | Print short runtime/account summary |
+| [`codex auth switch`](/cli/auth-switch) | Set active account by index |
+| [`codex auth check`](/cli/auth-check) | Run quick account health check |
+
+### Advanced Commands
+
+Diagnostics, repairs, and operational planning:
+
+| Command | Purpose |
+| --- | --- |
+| [`codex auth verify-flagged`](/cli/auth-verify-flagged) | Verify flagged accounts and optionally restore |
+| [`codex auth forecast`](/cli/auth-forecast) | Forecast best account by readiness/risk |
+| [`codex auth report`](/cli/auth-report) | Generate full health report |
+| [`codex auth fix`](/cli/auth-fix) | Apply safe account storage fixes |
+| [`codex auth doctor`](/cli/auth-doctor) | Run diagnostics and optional repairs |
+
+## Common Flags
+
+Many commands share these flags:
+
+<ParamField path="--json" type="boolean">
+  Output machine-readable JSON instead of human-friendly text. Available on: `verify-flagged`, `forecast`, `report`, `fix`, `doctor`.
+</ParamField>
+
+<ParamField path="--live" type="boolean">
+  Perform live quota probes before decisions/output. Available on: `forecast`, `report`, `fix`.
+</ParamField>
+
+<ParamField path="--dry-run" type="boolean">
+  Preview changes without writing to storage. Available on: `verify-flagged`, `fix`, `doctor`.
+</ParamField>
+
+<ParamField path="--model" type="string" default="gpt-5-codex">
+  Specify model for live probe requests. Available on: `forecast`, `report`, `fix`.
+</ParamField>
+
+## Quick Start Workflows
+
+### First-time setup
+
+```bash
+codex auth login
+codex auth check
+codex auth forecast --live
+```
+
+### Daily health monitoring
+
+```bash
+codex auth check
+codex auth forecast --live --model gpt-5-codex
+```
+
+### Repair and recovery
+
+```bash
+codex auth fix --dry-run
+codex auth fix --live
+codex auth doctor --fix
+```
+
+### Automation-friendly workflows
+
+```bash
+codex auth report --live --json
+codex auth forecast --json
+codex auth verify-flagged --json
+```
+
+## Exit Codes
+
+All commands follow standard Unix exit code conventions:
+
+- `0` - Success
+- `1` - General error
+- `130` - Interrupted (SIGINT)
+
+## Storage Locations
+
+Commands read/write these files:
+
+- **Accounts**: `~/.codex/multi-auth/openai-codex-accounts.json`
+- **Flagged**: `~/.codex/multi-auth/openai-codex-flagged-accounts.json`
+- **Quota cache**: `~/.codex/multi-auth/quota-cache.json`
+- **Settings**: `~/.codex/multi-auth/settings.json`
+
+Override the root directory with `CODEX_MULTI_AUTH_DIR`.
+
+## Related Documentation
+
+- [Settings Reference](/cli/settings-reference)
+- [Storage Paths](/cli/storage-paths)
+- [Configuration Guide](/guides/configuration)
+- [Troubleshooting](/guides/troubleshooting)

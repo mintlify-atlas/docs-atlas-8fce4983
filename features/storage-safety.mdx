@@ -1,0 +1,367 @@
+---
+title: "Storage & Data Safety"
+description: "Storage v3 format, atomic writes, backup strategies, and migration tools for Codex Multi-Auth"
+---
+
+## Overview
+
+Codex Multi-Auth implements enterprise-grade storage safety features to protect your OAuth credentials and account data from corruption, concurrent access issues, and data loss.
+
+## Storage v3 Format
+
+The latest storage format provides improved structure and reliability.
+
+<CardGroup cols={2}>
+  <Card title="Per-Family Active Index" icon="layer-group">
+    Tracks separate active accounts for each model family (GPT-5.x, Codex variants) to support family-specific routing.
+  </Card>
+  <Card title="Structured Rate Limits" icon="gauge">
+    Stores rate limit reset times per quota key (`codex:gpt-5-o1`, `codex:claude-5-sonnet`) for accurate cooldown tracking.
+  </Card>
+  <Card title="Enhanced Metadata" icon="tags">
+    Includes accountId source tracking, account labels, cooldown reasons, and per-account enable/disable flags.
+  </Card>
+  <Card title="Backward Compatible" icon="rotate">
+    Automatically migrates v1 and v2 storage formats on first load with zero data loss.
+  </Card>
+</CardGroup>
+
+### Storage Structure
+
+```json
+{
+  "version": 3,
+  "activeIndex": 1,
+  "activeIndexByFamily": {
+    "gpt-5-o1": 0,
+    "gpt-5-o3-mini": 1,
+    "claude-5-sonnet": 2
+  },
+  "accounts": [
+    {
+      "accountId": "user-abc123",
+      "accountIdSource": "id_token",
+      "email": "alice@example.com",
+      "accountLabel": "Work Account",
+      "refreshToken": "ey...",
+      "accessToken": "ey...",
+      "expiresAt": 1709484834567,
+      "enabled": true,
+      "addedAt": 1709394834567,
+      "lastUsed": 1709481234567,
+      "lastSwitchReason": "rate-limit",
+      "rateLimitResetTimes": {
+        "codex": 1709481534567,
+        "codex:gpt-5-o1": 1709481834567
+      },
+      "coolingDownUntil": 1709481534567,
+      "cooldownReason": "rate-limit"
+    }
+  ]
+}
+```
+
+### Field Reference
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `version` | number | Storage format version (always `3`) |
+| `activeIndex` | number | Global active account index |
+| `activeIndexByFamily` | object | Per-model-family active account mapping |
+| `accountId` | string | Unique account identifier from OAuth |
+| `accountIdSource` | enum | Source of accountId: `token`, `id_token`, `org`, `manual` |
+| `email` | string | Account email (case-insensitive dedupe) |
+| `accountLabel` | string | User-assigned label for account |
+| `refreshToken` | string | OAuth refresh token (encrypted at rest) |
+| `accessToken` | string | Cached access token |
+| `expiresAt` | number | Token expiry timestamp (ms since epoch) |
+| `enabled` | boolean | Account enable/disable flag |
+| `addedAt` | number | Account creation timestamp |
+| `lastUsed` | number | Last successful request timestamp |
+| `lastSwitchReason` | enum | Why account was last switched: `rate-limit`, `initial`, `rotation` |
+| `rateLimitResetTimes` | object | Per-quota-key rate limit reset times |
+| `coolingDownUntil` | number | Cooldown expiry timestamp |
+| `cooldownReason` | enum | Cooldown trigger: `auth-failure`, `network-error`, `rate-limit` |
+
+## Atomic Write Strategy
+
+All storage operations use atomic writes to prevent corruption from crashes or interruptions.
+
+### Write-Ahead Logging (WAL)
+
+```typescript
+// Write sequence:
+1. Create WAL journal with content + SHA256 checksum
+2. Write to temp file (.tmp)
+3. Verify temp file size > 0
+4. Atomic rename temp → accounts.json
+5. Delete WAL journal on success
+```
+
+**Benefits:**
+- Crash recovery from WAL journal if main file corrupted
+- Checksum validation prevents partial write corruption
+- Platform-safe atomic rename (handles Windows EBUSY/EPERM)
+
+### Backup Files
+
+Automatic backup before each write:
+
+```bash
+~/.codex/multi-auth/
+├── openai-codex-accounts.json      # Primary storage
+├── openai-codex-accounts.json.bak  # Automatic backup
+└── openai-codex-accounts.json.wal  # WAL journal (during writes)
+```
+
+**Recovery Priority:**
+1. Primary file (`accounts.json`)
+2. WAL journal (`.wal`) if primary corrupted
+3. Backup file (`.bak`) if both primary and WAL fail
+
+### Concurrency Safety
+
+```typescript
+// Storage mutex prevents concurrent writes
+await withAccountStorageTransaction(async (current, persist) => {
+  const updated = { ...current };
+  updated.accounts.push(newAccount);
+  await persist(updated);
+});
+```
+
+All mutations use a queue-based mutex to prevent:
+- Race conditions from concurrent plugin instances
+- Partial writes from overlapping operations
+- Lost updates from read-modify-write conflicts
+
+## Storage Locations
+
+### Global Storage
+
+Default location for all accounts:
+
+```bash
+~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+Used when:
+- No project root detected
+- Working outside a git repository
+- Explicitly configured via `setStoragePathDirect()`
+
+### Project-Scoped Storage
+
+Per-project account isolation:
+
+```bash
+# For repository at ~/projects/my-app
+~/projects/my-app/.codex/openai-codex-accounts.json
+```
+
+Used when:
+- Working inside a git repository
+- Project root detected via `.git` directory
+- Automatic `.gitignore` entry added for `.codex/`
+
+### Worktree Support
+
+Linked worktrees share accounts via identity root resolution:
+
+```bash
+# Main repo
+~/projects/my-app/.codex/openai-codex-accounts.json
+
+# Linked worktree (shares same storage)
+~/worktrees/feature-branch/
+  └── .git → ~/projects/my-app/.git/worktrees/feature-branch
+```
+
+**Resolution Algorithm:**
+1. Detect `.git` file (linked worktree indicator)
+2. Parse `gitdir:` path from `.git` file
+3. Read `commondir` to find repository root
+4. Validate bidirectional gitdir reference
+5. Use common repository root for storage key
+
+This ensures all worktrees from the same repository share accounts.
+
+## Automatic Migrations
+
+Seamless upgrades from legacy formats:
+
+### V1 → V3 Migration
+
+```typescript
+// V1 Format (single rate limit)
+{
+  "version": 1,
+  "accounts": [{
+    "rateLimitResetTime": 1709481234567  // single timestamp
+  }]
+}
+
+// Migrated to V3 (per-family rate limits)
+{
+  "version": 3,
+  "accounts": [{
+    "rateLimitResetTimes": {
+      "gpt-5-o1": 1709481234567,
+      "gpt-5-o3-mini": 1709481234567,
+      "claude-5-sonnet": 1709481234567
+    }
+  }],
+  "activeIndexByFamily": {
+    "gpt-5-o1": 0,
+    "gpt-5-o3-mini": 0,
+    "claude-5-sonnet": 0
+  }
+}
+```
+
+### Worktree-Keyed Storage Migration
+
+Legacy worktree-specific storage is automatically migrated to shared repository storage:
+
+```typescript
+// Old: per-worktree storage (isolated)
+~/worktrees/feature-a/.codex/openai-codex-accounts.json
+~/worktrees/feature-b/.codex/openai-codex-accounts.json
+
+// New: shared repository storage (merged)
+~/projects/my-app/.codex/openai-codex-accounts.json
+```
+
+**Migration Process:**
+1. Detect legacy worktree storage file
+2. Load and normalize legacy accounts
+3. Merge with current repository storage (dedupe by email/accountId)
+4. Persist merged storage to identity root
+5. Delete legacy file on success
+6. Retry-safe: preserves legacy file if merge fails
+
+## Deduplication
+
+Automatic duplicate removal on every load:
+
+### By Account Key
+
+```typescript
+// Deduplicates by accountId or refreshToken
+const key = account.accountId || account.refreshToken;
+// Keeps most recently used account
+```
+
+### By Email (Case-Insensitive)
+
+```typescript
+// Normalizes email to lowercase
+function normalizeEmailKey(email) {
+  return email.trim().toLowerCase();
+}
+
+// alice@example.com == ALICE@example.com == Alice@Example.Com
+```
+
+**Precedence:** When duplicates exist, keeps account with:
+1. Most recent `lastUsed` timestamp
+2. If tied, most recent `addedAt` timestamp
+
+## Error Handling
+
+### Storage Errors
+
+```typescript
+class StorageError extends Error {
+  code: string;        // EACCES, EPERM, EBUSY, ENOSPC
+  path: string;        // Affected file path
+  hint: string;        // Platform-specific remediation
+  cause?: Error;       // Original error with stack trace
+}
+```
+
+**Platform-Aware Hints:**
+
+| Code | Platform | Hint |
+|------|----------|------|
+| `EACCES` | Windows | Check antivirus exclusions for `~/.codex` folder |
+| `EPERM` | Windows | Ensure write permissions, close editors accessing file |
+| `EBUSY` | Windows | File locked by another process, close conflicting programs |
+| `ENOSPC` | All | Disk full, free up space and retry |
+| `EACCES` | Linux/Mac | Run `chmod 755 ~/.codex` to fix permissions |
+
+### Retry Logic
+
+Windows-specific retry for filesystem locks:
+
+```typescript
+// Rename with exponential backoff (EBUSY/EPERM)
+for (let attempt = 0; attempt < 5; attempt++) {
+  try {
+    await fs.rename(tempPath, finalPath);
+    return;
+  } catch (error) {
+    if (error.code === 'EBUSY' || error.code === 'EPERM') {
+      await sleep(10 * Math.pow(2, attempt));  // 10, 20, 40, 80, 160 ms
+      continue;
+    }
+    throw error;
+  }
+}
+```
+
+## Import/Export
+
+### Export Accounts
+
+```bash
+codex auth export backup.json
+```
+
+Creates portable backup:
+- Includes all accounts with full metadata
+- Preserves v3 format structure
+- Permissions: `0o600` (owner read/write only)
+- Overwrites existing file (use `--no-force` to prevent)
+
+### Import Accounts
+
+```bash
+codex auth import backup.json
+```
+
+Merges accounts from backup:
+- Deduplicates by accountId and email
+- Preserves most recent versions
+- Fails if result exceeds max accounts (50)
+- Validates schema before applying
+
+**Output:**
+```
+Imported 2 accounts
+Skipped 1 duplicate
+Total accounts: 5
+```
+
+## Best Practices
+
+<Card title="Data Safety Recommendations" icon="shield-check">
+  1. **Enable Backups:** Keep `storageBackupEnabled: true` (default)
+  2. **Regular Exports:** Run `codex auth export` before major operations
+  3. **Monitor WAL:** Persistent `.wal` files indicate write failures
+  4. **Verify Migrations:** Check account count after automatic migrations
+  5. **Gitignore:** Ensure `.codex/` is in `.gitignore` to prevent credential leaks
+  6. **Permissions:** Storage files use `0o600` (owner-only access)
+  7. **Cleanup:** Run `codex auth fix` to deduplicate after imports
+</Card>
+
+## Related Settings
+
+- `storageBackupEnabled` - Enable/disable automatic backups (default: `true`)
+- `CODEX_PROJECT_ROOT` - Override project root detection
+- Account limits defined in `ACCOUNT_LIMITS.MAX_ACCOUNTS` (50)
+
+## Related Commands
+
+- [`codex auth fix`](/cli/auth-fix) - Repair storage issues
+- [`codex auth doctor`](/cli/auth-doctor) - Diagnose storage health

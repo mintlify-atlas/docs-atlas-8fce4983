@@ -1,0 +1,473 @@
+---
+title: codex auth doctor
+description: Run comprehensive diagnostics and optional repairs
+---
+
+Perform deep diagnostics on all accounts, storage files, and configuration, with optional automated repairs.
+
+## Usage
+
+```bash
+codex auth doctor [--json] [--fix] [--dry-run]
+```
+
+<ParamField path="--json" type="boolean" default="false">
+  Output machine-readable JSON instead of human-friendly text.
+</ParamField>
+
+<ParamField path="--fix" type="boolean" default="false">
+  Apply safe repairs for detected issues.
+</ParamField>
+
+<ParamField path="--dry-run" type="boolean" default="false">
+  Preview repairs without making changes (only with `--fix`).
+</ParamField>
+
+## How It Works
+
+1. **Storage integrity** - Check file permissions, format, corruption
+2. **Account validation** - Verify tokens, metadata, timestamps
+3. **Configuration check** - Validate settings and environment variables
+4. **Rate limit status** - Check cooldowns and reset times
+5. **Quota cache health** - Validate cache consistency
+6. **Flagged accounts** - Check flagged account state
+7. **Sync state** - Verify Codex CLI sync status
+8. **Network connectivity** - Test auth service reachability
+9. **Repairs** (if `--fix`) - Apply safe fixes for detected issues
+
+## Example Output
+
+### Diagnostics Only (Default)
+
+```
+=== Codex Multi-Auth Doctor ===
+
+Running diagnostics...
+
+✓ Storage files
+  - openai-codex-accounts.json: OK (4 accounts)
+  - openai-codex-flagged-accounts.json: OK (1 account)
+  - quota-cache.json: OK (4 entries)
+  - settings.json: OK
+
+✓ Account health
+  - 4 active accounts
+  - 3 healthy, 1 rate-limited
+  - 0 missing account IDs
+  - 0 missing emails
+  - 0 expired tokens
+
+! Configuration warnings
+  - CODEX_TUI_V2 not set (using default)
+  - Quota cache older than 1 hour
+
+✓ Rate limits
+  - 1 account cooling down (resets in 45m)
+  - 0 stuck cooldowns
+
+✓ Sync state
+  - Codex CLI state synced
+  - Active account matches
+
+✗ Issues found: 2
+  1. Quota cache stale (last updated 90 minutes ago)
+  2. CODEX_TUI_V2 environment variable not set
+
+Recommendation:
+  Run: codex auth check --live
+  Set: export CODEX_TUI_V2=1
+```
+
+### Diagnostics with Fixes
+
+```
+=== Codex Multi-Auth Doctor ===
+
+Running diagnostics with repairs...
+
+✓ Storage files
+  - openai-codex-accounts.json: OK (4 accounts)
+  - openai-codex-flagged-accounts.json: OK (1 account)
+  - quota-cache.json: Refreshed (was stale)
+  - settings.json: OK
+
+✓ Account health
+  - 4 active accounts
+  - Fixed: Refreshed 1 expired token
+  - Fixed: Added missing account ID for 1 account
+  - Fixed: Cleared 1 expired cooldown
+
+✓ Configuration
+  - All settings valid
+  - Created missing cache directory
+
+✓ Rate limits
+  - 0 accounts cooling down
+  - Fixed: Removed 1 stuck cooldown
+
+✓ Sync state
+  - Codex CLI state synced
+  - Active account matches
+
+Result: 4 issues fixed
+```
+
+### Dry Run Mode
+
+```
+=== Codex Multi-Auth Doctor ===
+
+Running diagnostics (dry run - no changes will be made)...
+
+! Issues found:
+  1. Would refresh 1 expired token
+  2. Would add missing account ID for 1 account
+  3. Would clear 1 expired cooldown
+  4. Would refresh stale quota cache
+
+Result (dry run): 4 fixes needed
+Run without --dry-run to apply fixes.
+```
+
+## JSON Output
+
+```bash
+codex auth doctor --json
+```
+
+```json
+{
+  "timestamp": 1709478600000,
+  "mode": "diagnostics",
+  "storage": {
+    "accountsFile": {
+      "status": "ok",
+      "path": "~/.codex/multi-auth/openai-codex-accounts.json",
+      "accountCount": 4
+    },
+    "flaggedFile": {
+      "status": "ok",
+      "path": "~/.codex/multi-auth/openai-codex-flagged-accounts.json",
+      "accountCount": 1
+    },
+    "quotaCache": {
+      "status": "warning",
+      "message": "Cache older than 1 hour",
+      "lastUpdated": 1709472000000
+    },
+    "settings": {
+      "status": "ok"
+    }
+  },
+  "accounts": {
+    "total": 4,
+    "healthy": 3,
+    "rateLimited": 1,
+    "missingAccountIds": 0,
+    "missingEmails": 0,
+    "expiredTokens": 0
+  },
+  "configuration": {
+    "warnings": [
+      "CODEX_TUI_V2 not set (using default)"
+    ]
+  },
+  "rateLimits": {
+    "activeCooldowns": 1,
+    "stuckCooldowns": 0
+  },
+  "sync": {
+    "codexCliSynced": true,
+    "activeAccountMatches": true
+  },
+  "issues": [
+    {
+      "severity": "warning",
+      "type": "stale_quota_cache",
+      "message": "Quota cache older than 1 hour"
+    },
+    {
+      "severity": "info",
+      "type": "missing_env_var",
+      "message": "CODEX_TUI_V2 not set"
+    }
+  ],
+  "totalIssues": 2,
+  "recommendations": [
+    "Run: codex auth check --live",
+    "Set: export CODEX_TUI_V2=1"
+  ]
+}
+```
+
+## Issue Severity
+
+<ParamField path="error" type="severity">
+  Critical issue preventing normal operation (missing storage, corrupt files).
+</ParamField>
+
+<ParamField path="warning" type="severity">
+  Issue affecting performance or reliability (stale cache, expired tokens).
+</ParamField>
+
+<ParamField path="info" type="severity">
+  Minor issue or suggestion (missing optional env vars).
+</ParamField>
+
+## Diagnostic Checks
+
+### Storage Integrity
+
+- File existence and permissions
+- JSON parse validity
+- Schema compliance
+- Backup file presence
+
+### Account Validation
+
+- Token format and expiry
+- Account ID extraction
+- Email extraction
+- Metadata completeness
+- Duplicate detection
+
+### Configuration
+
+- Environment variables
+- Settings file validity
+- Storage path resolution
+- Cache directory existence
+
+### Rate Limits
+
+- Active cooldowns
+- Reset time validity
+- Stuck cooldown detection
+
+### Sync State
+
+- Codex CLI state file
+- Active account consistency
+- Last sync timestamp
+
+### Network
+
+- Auth service reachability
+- Token refresh endpoint
+- Quota probe endpoint (if `--fix`)
+
+## Automatic Repairs (`--fix`)
+
+When `--fix` is enabled, doctor applies:
+
+1. **Refresh expired tokens** - Using valid refresh tokens
+2. **Add missing metadata** - Extract IDs and emails from tokens
+3. **Clear expired cooldowns** - Remove past reset times
+4. **Refresh quota cache** - Update stale cache entries
+5. **Create missing directories** - Set up cache/log paths
+6. **Remove invalid fields** - Clean corrupted metadata
+7. **Sync Codex CLI** - Update active account state
+8. **Merge duplicates** - Deduplicate accounts
+
+## Examples
+
+### Run diagnostics
+
+```bash
+codex auth doctor
+```
+
+### Diagnose and fix
+
+```bash
+codex auth doctor --fix
+```
+
+### Preview fixes
+
+```bash
+codex auth doctor --fix --dry-run
+```
+
+### Machine-readable diagnostics
+
+```bash
+codex auth doctor --json
+```
+
+### Count issues
+
+```bash
+codex auth doctor --json | jq '.totalIssues'
+```
+
+### Extract recommendations
+
+```bash
+codex auth doctor --json | jq -r '.recommendations[]'
+```
+
+### Automated health check
+
+```bash
+#!/bin/bash
+ISSUES=$(codex auth doctor --json | jq '.totalIssues')
+
+if [ $ISSUES -gt 0 ]; then
+  echo "Found $ISSUES issues"
+  codex auth doctor --fix
+  codex auth check --live
+fi
+```
+
+## Exit Codes
+
+<ParamField path="0" type="exit code">
+  No issues found (or all issues fixed with `--fix`).
+</ParamField>
+
+<ParamField path="1" type="exit code">
+  Issues found (or fix operation failed).
+</ParamField>
+
+## When to Run
+
+### After Errors
+
+When you encounter any error:
+
+```bash
+codex auth doctor --fix
+```
+
+### Before Important Work
+
+Pre-session health check:
+
+```bash
+codex auth doctor
+codex auth check --live
+codex auth forecast --live
+```
+
+### Periodic Maintenance
+
+Weekly health check:
+
+```bash
+# Cron: Every Monday at 6 AM
+0 6 * * 1 codex auth doctor --fix --json > ~/logs/doctor-$(date +\%Y-\%m-\%d).json
+```
+
+### After Upgrades
+
+After updating codex-multi-auth:
+
+```bash
+codex auth doctor --fix
+```
+
+## Comparison with Other Commands
+
+### `doctor` vs `check`
+
+| Command | Scope | Repairs | Speed |
+| --- | --- | --- | --- |
+| `doctor` | Full system diagnostics | Optional (`--fix`) | Slower |
+| `check` | Account token validation | Always repairs | Faster |
+
+### `doctor` vs `fix`
+
+| Command | Diagnostics | Repairs | When to Use |
+| --- | --- | --- | --- |
+| `doctor` | Full report | Safe fixes | Troubleshooting |
+| `fix` | Minimal | Safe fixes | Known issues |
+
+## Troubleshooting
+
+### Doctor Fails to Run
+
+Check storage permissions:
+
+```bash
+ls -la ~/.codex/multi-auth/
+chmod 755 ~/.codex/multi-auth/
+```
+
+### Fix Mode Fails
+
+Run without `--fix` to see diagnostics:
+
+```bash
+codex auth doctor
+# Review issues
+codex auth doctor --fix --dry-run
+```
+
+### Network Checks Fail
+
+Skip network checks (run offline diagnostics):
+
+```bash
+# Doctor doesn't have an offline mode yet
+# Use check/fix commands instead
+codex auth fix
+```
+
+### Storage Corruption Detected
+
+Restore from backup:
+
+```bash
+cp ~/.codex/multi-auth/openai-codex-accounts.json.backup \
+   ~/.codex/multi-auth/openai-codex-accounts.json
+codex auth doctor --fix
+```
+
+## Related Commands
+
+- [`codex auth check`](/cli/auth-check) - Quick account validation
+- [`codex auth fix`](/cli/auth-fix) - Targeted repairs
+- [`codex auth report`](/cli/auth-report) - Detailed health report
+- [`codex auth verify-flagged`](/cli/auth-verify-flagged) - Fix flagged accounts
+
+## Best Practices
+
+### Regular Diagnostics
+
+Run weekly:
+
+```bash
+codex auth doctor --json > weekly-health.json
+```
+
+### Pre-deployment
+
+Ensure clean state:
+
+```bash
+codex auth doctor --fix
+codex auth check --live
+```
+
+### Post-incident
+
+Capture full diagnostic state:
+
+```bash
+codex auth doctor --json > incident-$(date +%s).json
+```
+
+### CI/CD Integration
+
+```yaml
+# .github/workflows/health.yml
+steps:
+  - name: Run diagnostics
+    run: codex auth doctor --json | tee doctor-report.json
+  - name: Upload report
+    uses: actions/upload-artifact@v3
+    with:
+      name: health-report
+      path: doctor-report.json
+```

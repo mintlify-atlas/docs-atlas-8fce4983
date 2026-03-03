@@ -1,0 +1,433 @@
+---
+title: "Terminal UI & Dashboard"
+description: "Interactive dashboard, hotkeys, themes, and TUI features for Codex Multi-Auth"
+---
+
+## Overview
+
+Codex Multi-Auth includes a rich terminal user interface (TUI) with an interactive dashboard, configurable themes, and powerful keyboard shortcuts for efficient account management.
+
+## Dashboard
+
+Interactive menu for managing accounts without memorizing commands.
+
+<CardGroup cols={2}>
+  <Card title="Quick Switch" icon="bolt">
+    Press 1-9 to instantly switch to an account by number. No confirmation needed.
+  </Card>
+  <Card title="Search & Filter" icon="search">
+    Press `/` to search accounts by email, label, or account ID in real-time.
+  </Card>
+  <Card title="Account Details" icon="circle-info">
+    Select any account to view detailed status, quota, and perform actions (refresh, toggle, delete).
+  </Card>
+  <Card title="Live Updates" icon="rotate">
+    Dashboard refreshes every 200ms to show real-time quota and cooldown changes.
+  </Card>
+</CardGroup>
+
+### Launch Dashboard
+
+```bash
+codex auth
+```
+
+**Default View:**
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Codex Multi-Auth Dashboard
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  Quick Start
+  › Add account                                  (green)
+  › Check accounts                               (green)
+  › Find best account                            (green)
+  › Fix issues                                   (green)
+  › Settings                                     (green)
+
+  Accounts
+◆ 1. alice@example.com [current] [ok]
+    Last used: today | Limits: 5h ██████████ 45% | 7d ████████░░ 78%
+
+  2. bob@example.com [rate-limited]
+    Last used: 2h ago | Limits: 5h ██░░░░░░░░ 12% reset 4m 23s
+
+  3. charlie@example.com [ok]
+    Last used: yesterday | Limits: 5h ████████░░ 82%
+
+  Danger Zone
+  › Remove all accounts                          (red)
+
+Help: ↑/↓ navigate • Enter select • 1-9 quick switch • / search • ? help • q quit
+```
+
+## Keyboard Shortcuts
+
+### Main Menu Hotkeys
+
+| Key | Action | Notes |
+|-----|--------|-------|
+| `↑` / `↓` | Navigate menu | Arrow keys or `j`/`k` |
+| `Enter` | Select item | Confirm choice |
+| `1-9` | Quick switch account | Instant switch, no confirmation |
+| `/` | Search accounts | Filter by email/label/ID |
+| `?` | Toggle help | Show/hide detailed help |
+| `q` | Quit dashboard | Return to terminal |
+| `Esc` | Cancel / Back | Exit menus or search |
+| `Home` | Jump to top | First menu item |
+| `End` | Jump to bottom | Last menu item |
+
+### Account Details Hotkeys
+
+| Key | Action | Notes |
+|-----|--------|-------|
+| `s` | Set as current | Make account active |
+| `r` | Refresh token | Re-authenticate account |
+| `t` / `e` / `x` | Toggle enabled | Enable/disable account |
+| `d` | Delete account | Remove permanently |
+| `q` | Back to menu | Return to main dashboard |
+
+### Search Mode
+
+```bash
+# Press / to enter search mode
+Search: alice
+
+# Shows only matching accounts
+◆ 1. alice@example.com [current] [ok]
+
+# Press Esc or Enter blank to clear search
+```
+
+**Search Matches:**
+- Email addresses
+- Account labels
+- Account IDs
+- Account numbers (1-9)
+
+**Case Insensitive:** `alice` matches `Alice@Example.com`
+
+## Themes
+
+Customize colors, glyphs, and focus styles to match your terminal.
+
+### Theme Settings
+
+```typescript
+interface UiTheme {
+  profile: 'ansi16' | 'ansi256' | 'truecolor';  // Color depth
+  glyphMode: 'ascii' | 'unicode' | 'auto';      // Character set
+  palette: 'green' | 'blue';                    // Color scheme
+  accent: 'green' | 'cyan' | 'blue' | 'yellow'; // Accent color
+}
+```
+
+### Color Profiles
+
+<CardGroup cols={3}>
+  <Card title="ANSI 16" icon="palette">
+    Basic 16-color terminal support. Maximum compatibility.
+  </Card>
+  <Card title="ANSI 256" icon="swatchbook">
+    256-color palette. Good balance of colors and compatibility.
+  </Card>
+  <Card title="Truecolor" icon="brush">
+    24-bit RGB colors. Best visual experience. Default.
+  </Card>
+</CardGroup>
+
+**Auto-Detection:**
+```typescript
+// Detects terminal capabilities from environment
+const profile = detectColorProfile();
+// Checks: COLORTERM, TERM, WT_SESSION, etc.
+```
+
+### Glyph Modes
+
+```bash
+# Unicode (default for modern terminals)
+◆ Selected
+○ Unselected
+• Bullet
+✓ Success
+✗ Error
+
+# ASCII (fallback for older terminals)
+> Selected
+o Unselected
+- Bullet
++ Success
+x Error
+```
+
+**Auto Mode:** Detects Unicode support:
+```typescript
+const isUnicodeSafe = 
+  process.env.WT_SESSION ||           // Windows Terminal
+  process.env.TERM_PROGRAM === 'vscode' || // VS Code
+  process.env.TERM?.includes('xterm');      // xterm-compatible
+```
+
+### Color Palettes
+
+**Green Palette (Default):**
+```typescript
+{
+  primary: 'rgb(74, 222, 128)',   // Success actions
+  success: 'rgb(74, 222, 128)',   // Healthy accounts
+  border: 'rgb(34, 197, 94)',     // Focus borders
+  focusBg: 'rgb(22, 101, 52)',    // Selected background
+}
+```
+
+**Blue Palette:**
+```typescript
+{
+  primary: 'rgb(96, 165, 250)',   // Success actions
+  success: 'rgb(96, 165, 250)',   // Healthy accounts
+  border: 'rgb(59, 130, 246)',    // Focus borders
+  focusBg: 'rgb(37, 99, 235)',    // Selected background
+}
+```
+
+### Accent Colors
+
+```typescript
+// Green accent (default)
+accentColor: 'rgb(74, 222, 128)'
+
+// Cyan accent
+accentColor: 'rgb(34, 211, 238)'
+
+// Blue accent
+accentColor: 'rgb(59, 130, 246)'
+
+// Yellow accent
+accentColor: 'rgb(245, 158, 11)'
+```
+
+### Configure Theme
+
+Access theme settings from dashboard:
+
+```bash
+codex auth
+# Select "Settings" → "Theme"
+```
+
+**Theme Options:**
+- **Color Profile:** ANSI 16 / 256 / Truecolor
+- **Glyph Mode:** ASCII / Unicode / Auto
+- **Palette:** Green / Blue
+- **Accent:** Green / Cyan / Blue / Yellow
+- **Focus Style:** Row Invert / Chip
+
+**Live Preview:** Changes apply immediately with real-time preview.
+
+**Cancel Restore:** Press `q` to cancel and restore original theme.
+
+## Focus Styles
+
+Two focus indicator styles:
+
+### Row Invert (Default)
+
+```bash
+# Entire row highlighted with inverted background
+◆ 1. alice@example.com [current] [ok]
+  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ (highlighted)
+  2. bob@example.com [rate-limited]
+  3. charlie@example.com [ok]
+```
+
+### Chip Style
+
+```bash
+# Compact chip indicator next to item
+◆ 1. alice@example.com [current] [ok]
+  2. bob@example.com [rate-limited]
+  3. charlie@example.com [ok]
+```
+
+**Configure:**
+```typescript
+// In settings or account display
+focusStyle: 'row-invert' | 'chip'
+```
+
+## Account Status Badges
+
+Color-coded badges indicate account health:
+
+| Status | Badge | Color | Meaning |
+|--------|-------|-------|----------|
+| Active | `[active]` | Green | Currently in use |
+| OK | `[ok]` | Green | Healthy and ready |
+| Rate Limited | `[rate-limited]` | Yellow | Quota exhausted |
+| Cooldown | `[cooldown]` | Yellow | Temporary backoff |
+| Disabled | `[disabled]` | Red | Manually disabled |
+| Flagged | `[flagged]` | Red | Hard failure detected |
+| Error | `[error]` | Red | Auth or network error |
+
+**Badge Rendering:**
+```typescript
+// Truecolor
+[ok]         → rgb(74, 222, 128) background
+[disabled]   → rgb(239, 68, 68) background
+
+// ANSI 16
+[ok]         → \x1b[42m (green background)
+[disabled]   → \x1b[41m (red background)
+```
+
+## Quota Visualization
+
+Real-time quota bars with color coding:
+
+```bash
+# Healthy (70%+ remaining)
+5h ██████████ 78% | 7d █████████░ 92%
+   ^^^^^^^^^^ green
+
+# Warning (35-70% remaining)
+5h █████░░░░░ 45% | 7d ████░░░░░░ 38%
+   ^^^^^^^^^^ yellow
+
+# Critical (<35% remaining)
+5h ██░░░░░░░░ 12% reset 4m 23s | 7d █░░░░░░░░░ 8%
+   ^^^^^^^^^^ red
+```
+
+**Bar Characters:**
+- Filled: `█` (Unicode) or `#` (ASCII)
+- Empty: `░` (Unicode) or `-` (ASCII)
+- Width: 10 characters
+
+**Quota Tones:**
+```typescript
+function quotaToneFromLeftPercent(percent: number) {
+  if (percent <= 15) return 'danger';    // Red
+  if (percent <= 35) return 'warning';   // Yellow
+  return 'success';                      // Green
+}
+```
+
+## Status Line Details
+
+Account hints show additional context:
+
+```typescript
+// Default fields (customizable order)
+statuslineFields: ['last-used', 'limits', 'status']
+
+// Rendered output
+Last used: today | Limits: 5h ██████████ 45% | Status: ok
+```
+
+**Field Options:**
+- `last-used` - Relative time (today, yesterday, 3d ago)
+- `limits` - Quota bars for 5h and 7d windows
+- `status` - Account status text
+
+**Customize Fields:**
+```typescript
+const account: AccountInfo = {
+  statuslineFields: ['limits', 'last-used'],  // Custom order
+  showHintsForUnselectedRows: true,           // Show on all rows
+};
+```
+
+## Settings Hub
+
+Interactive settings editor accessible from dashboard:
+
+```bash
+codex auth
+# Select "Settings"
+```
+
+**Settings Categories:**
+- **Theme:** Color profile, glyphs, palette, accent
+- **Dashboard:** Focus style, hints, refresh interval
+- **Behavior:** Live sync, proactive refresh, cooldown durations
+- **Advanced:** Storage paths, debug logging, feature flags
+
+**Settings Persistence:**
+```typescript
+// Queued writes with retry on EBUSY/EPERM (Windows safe)
+await saveSettings(updated);
+// Max 4 retries with exponential backoff: 10ms, 20ms, 40ms, 80ms
+```
+
+**Cancel Without Save:** Press `q` to discard changes.
+
+**Live Preview:** Theme changes apply immediately during editing.
+
+## Accessibility
+
+<Card title="TUI Accessibility Features" icon="universal-access">
+  - **ANSI 16 Fallback:** Works on basic terminals
+  - **ASCII Glyphs:** No Unicode dependency
+  - **Screen Reader Safe:** Plain text status messages
+  - **High Contrast:** Configurable color palettes
+  - **Keyboard Only:** No mouse required
+  - **TTY Detection:** Graceful fallback to CLI mode when not interactive
+</Card>
+
+### Non-TTY Fallback
+
+```bash
+# When piped or redirected, falls back to CLI output
+codex auth | tee output.log
+# Output:
+# Account 1: alice@example.com (active, ok)
+# Account 2: bob@example.com (rate-limited)
+# Account 3: charlie@example.com (ok)
+```
+
+**TTY Detection:**
+```typescript
+export function isTTY(): boolean {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+```
+
+## Best Practices
+
+<Card title="Dashboard Usage Tips" icon="lightbulb">
+  1. **Quick Switch:** Use number keys (1-9) for frequent account changes
+  2. **Search:** Press `/` to filter large account lists
+  3. **Help Toggle:** Press `?` to see context-sensitive help
+  4. **Theme Selection:** Match terminal's actual color support (check `$TERM`)
+  5. **Focus Style:** Use "chip" on narrow terminals, "row-invert" otherwise
+  6. **Live Updates:** Enabled by default; disable if causing flicker
+  7. **Status Fields:** Customize order based on priority (limits first for quota-sensitive work)
+</Card>
+
+## Performance
+
+**Refresh Rate:** 200ms default (configurable)
+```typescript
+refreshIntervalMs: 200  // Update quota bars every 200ms
+```
+
+**Render Optimization:**
+- Incremental rendering (only changed lines)
+- Debounced input processing
+- Lazy status message evaluation
+
+**Memory:** Minimal footprint (~2MB for dashboard with 50 accounts)
+
+## Related Settings
+
+- `uiTheme` - Theme configuration object
+- `focusStyle` - Row invert or chip style
+- `refreshIntervalMs` - Dashboard update frequency
+- `showHintsForUnselectedRows` - Always show account hints
+
+## Related Commands
+
+- [`codex auth login`](/cli/auth-login) - Launch interactive dashboard
+- [`codex auth list`](/cli/auth-list) - Non-interactive account list
+- [`codex auth check`](/cli/auth-check) - Quick status without TUI

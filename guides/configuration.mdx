@@ -1,0 +1,371 @@
+---
+title: Configuration
+description: Configure Codex Multi-Auth settings, environment variables, and runtime behavior
+---
+
+Codex Multi-Auth uses a unified settings system with three configuration layers: settings file, optional override files, and environment variables.
+
+## Configuration Layers
+
+Runtime configuration is resolved in this order:
+
+| Layer | Path | Purpose |
+| --- | --- | --- |
+| **Unified settings** | `~/.codex/multi-auth/settings.json` | Dashboard display and backend `pluginConfig` |
+| **Optional config override** | `CODEX_MULTI_AUTH_CONFIG_PATH=<path>` | External config file source |
+| **Root override** | `CODEX_MULTI_AUTH_DIR=<path>` | Re-home settings/accounts/cache/log directories |
+
+## Settings File Structure
+
+The unified settings file (`settings.json`) contains two main sections:
+
+```json
+{
+  "version": 1,
+  "dashboardDisplaySettings": {
+    "menuAutoFetchLimits": true,
+    "menuSortEnabled": true,
+    "menuSortMode": "ready-first",
+    "menuShowQuotaSummary": true,
+    "menuShowQuotaCooldown": true,
+    "menuLayoutMode": "compact-details"
+  },
+  "pluginConfig": {
+    "codexMode": true,
+    "liveAccountSync": true,
+    "sessionAffinity": true,
+    "proactiveRefreshGuardian": true,
+    "preemptiveQuotaEnabled": true,
+    "fetchTimeoutMs": 60000,
+    "streamStallTimeoutMs": 45000
+  }
+}
+```
+
+### Dashboard Display Settings
+
+Control the interactive CLI dashboard appearance:
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `menuAutoFetchLimits` | boolean | `true` | Auto-fetch quota limits on dashboard load |
+| `menuSortEnabled` | boolean | `true` | Enable account sorting in menu |
+| `menuSortMode` | string | `"ready-first"` | Sort mode: `"ready-first"`, `"health"`, `"email"` |
+| `menuShowQuotaSummary` | boolean | `true` | Display quota summary in menu |
+| `menuShowQuotaCooldown` | boolean | `true` | Show cooldown timers in menu |
+| `menuLayoutMode` | string | `"compact-details"` | Layout: `"compact"`, `"compact-details"`, `"full"` |
+
+### Plugin Configuration
+
+Core runtime behavior settings:
+
+| Setting | Type | Default | Description |
+| --- | --- | --- | --- |
+| `codexMode` | boolean | `true` | Enable Codex CLI parity mode |
+| `liveAccountSync` | boolean | `true` | Sync account state across CLI sessions |
+| `sessionAffinity` | boolean | `true` | Keep same account for conversation (20min TTL) |
+| `proactiveRefreshGuardian` | boolean | `true` | Refresh tokens before expiration (60s interval) |
+| `preemptiveQuotaEnabled` | boolean | `true` | Defer requests when quota critically low |
+| `fetchTimeoutMs` | number | `60000` | HTTP request timeout (minimum 1000ms) |
+| `streamStallTimeoutMs` | number | `45000` | SSE stream stall timeout (minimum 1000ms) |
+| `perProjectAccounts` | boolean | `true` | Store accounts per-project instead of globally |
+| `sessionRecovery` | boolean | `true` | Persist conversation state for recovery |
+| `autoResume` | boolean | `true` | Auto-resume interrupted conversations |
+
+## Environment Variable Overrides
+
+Environment variables **override** settings file values.
+
+### Stable Overrides
+
+Safe for day-to-day use:
+
+| Variable | Type | Description |
+| --- | --- | --- |
+| `CODEX_MULTI_AUTH_DIR` | path | Override root directory for plugin-managed files |
+| `CODEX_MULTI_AUTH_CONFIG_PATH` | path | Load configuration from alternate path |
+| `CODEX_MODE` | `0`\|`1` | Disable or enable Codex mode |
+| `CODEX_TUI_V2` | `0`\|`1` | Disable or enable TUI v2 |
+| `CODEX_TUI_COLOR_PROFILE` | `truecolor`\|`ansi256`\|`ansi16` | Color profile selection |
+| `CODEX_TUI_GLYPHS` | `ascii`\|`unicode`\|`auto` | Glyph mode selection |
+| `CODEX_AUTH_FETCH_TIMEOUT_MS` | number | HTTP request timeout override |
+| `CODEX_AUTH_STREAM_STALL_TIMEOUT_MS` | number | Stream stall timeout override |
+| `CODEX_AUTH_SESSION_AFFINITY` | `0`\|`1` | Enable/disable session affinity |
+| `CODEX_AUTH_LIVE_ACCOUNT_SYNC` | `0`\|`1` | Enable/disable live account sync |
+
+### Advanced Overrides
+
+For debugging, benchmarking, or maintainer workflows:
+
+```bash
+# Refresh lease tuning
+export CODEX_AUTH_REFRESH_LEASE_TTL_MS=15000
+
+# Sync with Codex CLI state
+export CODEX_MULTI_AUTH_SYNC_CODEX_CLI=1
+
+# Real Codex binary path
+export CODEX_MULTI_AUTH_REAL_CODEX_BIN=/usr/local/bin/codex
+
+# Bypass plugin (emergency fallback)
+export CODEX_MULTI_AUTH_BYPASS=1
+
+# CLI accounts path override
+export CODEX_CLI_ACCOUNTS_PATH=/custom/path/accounts.json
+```
+
+<Warning>
+Advanced overrides are intended for debugging only. Incorrect values can break authentication or cause data loss. See [development/CONFIG_FIELDS.md](https://github.com/ndycode/codex-multi-auth/blob/main/docs/development/CONFIG_FIELDS.md) for full inventory.
+</Warning>
+
+## Resolution Precedence
+
+Plugin runtime config resolution order:
+
+<Steps>
+  <Step title="Check unified settings">
+    Load `pluginConfig` from `~/.codex/multi-auth/settings.json` if present and valid.
+  </Step>
+
+  <Step title="Fallback to file config">
+    If unified settings are absent or invalid, load from `CODEX_MULTI_AUTH_CONFIG_PATH` or legacy compatibility paths.
+  </Step>
+
+  <Step title="Apply defaults">
+    Merge with hardcoded defaults for any missing settings.
+  </Step>
+
+  <Step title="Apply environment overrides">
+    Environment variables override individual runtime settings (last priority, highest precedence).
+  </Step>
+</Steps>
+
+Dashboard display values are resolved from persisted `dashboardDisplaySettings` and then normalized defaults.
+
+## Recommended Defaults
+
+For most production environments, keep these enabled:
+
+- ✅ `menuAutoFetchLimits` — Ensures accurate quota display
+- ✅ `menuSortEnabled` — Improves account selection UX
+- ✅ `liveAccountSync` — Prevents stale account state across sessions
+- ✅ `sessionAffinity` — Maintains conversation continuity
+- ✅ `proactiveRefreshGuardian` — Prevents mid-conversation token expiration
+- ✅ `preemptiveQuotaEnabled` — Avoids quota exhaustion errors
+
+## Editing Settings
+
+### Via Settings Hub (Interactive)
+
+Launch the interactive settings editor:
+
+```bash
+codex auth settings
+```
+
+Navigation:
+- **Arrow keys**: Move between settings
+- **Space/Enter**: Toggle or edit value
+- **S**: Save and exit
+- **Q**: Cancel without saving (discards changes)
+
+<Info>
+Theme live-preview changes are restored to baseline on cancel (Q). Settings are written to `~/.codex/multi-auth/settings.json` with EBUSY/EPERM retry logic (max 4 retries, exponential backoff).
+</Info>
+
+### Via Manual Edit
+
+Edit the settings file directly:
+
+```bash
+# macOS/Linux
+nano ~/.codex/multi-auth/settings.json
+
+# Windows
+notepad %USERPROFILE%\.codex\multi-auth\settings.json
+```
+
+Ensure the JSON is valid before saving. Invalid JSON will cause the plugin to fall back to defaults.
+
+### Via Environment Variables
+
+For temporary overrides (e.g., CI/CD pipelines):
+
+```bash
+# Disable session affinity for this session
+export CODEX_AUTH_SESSION_AFFINITY=0
+codex auth check
+
+# Increase fetch timeout for slow networks
+export CODEX_AUTH_FETCH_TIMEOUT_MS=120000
+codex auth forecast --live
+```
+
+## Timeout Settings
+
+### Fetch Timeout
+
+HTTP request timeout for account/token requests:
+
+```json
+{
+  "fetchTimeoutMs": 60000
+}
+```
+
+Or via environment:
+
+```bash
+export CODEX_AUTH_FETCH_TIMEOUT_MS=90000
+```
+
+- **Default**: 60000ms (60 seconds)
+- **Minimum**: 1000ms (1 second)
+- **Use case**: Increase for slow or unstable networks
+
+### Stream Stall Timeout
+
+Detects stalled SSE streams during response streaming:
+
+```json
+{
+  "streamStallTimeoutMs": 45000
+}
+```
+
+Or via environment:
+
+```bash
+export CODEX_AUTH_STREAM_STALL_TIMEOUT_MS=60000
+```
+
+- **Default**: 45000ms (45 seconds)
+- **Minimum**: 1000ms (1 second)
+- **Use case**: Increase if you see false-positive stall warnings
+
+## Quota Deferral Settings
+
+Preemptive quota scheduler defers requests when quota is critically low:
+
+```json
+{
+  "preemptiveQuotaEnabled": true,
+  "preemptiveQuotaRemainingPercent5h": 5,
+  "preemptiveQuotaRemainingPercent7d": 5,
+  "preemptiveQuotaMaxDeferralMs": 7200000
+}
+```
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `preemptiveQuotaEnabled` | `true` | Enable/disable quota deferral |
+| `preemptiveQuotaRemainingPercent5h` | `5` | 5-hour window threshold (0-100%) |
+| `preemptiveQuotaRemainingPercent7d` | `5` | 7-day window threshold (0-100%) |
+| `preemptiveQuotaMaxDeferralMs` | `7200000` | Max deferral time (2 hours) |
+
+When remaining quota falls below the threshold, the scheduler defers requests up to `preemptiveQuotaMaxDeferralMs` to wait for quota replenishment.
+
+## Live Account Sync Settings
+
+Synchronize account state across CLI sessions and processes:
+
+```json
+{
+  "liveAccountSync": true,
+  "liveAccountSyncDebounceMs": 250,
+  "liveAccountSyncPollMs": 2000
+}
+```
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `liveAccountSync` | `true` | Enable live sync |
+| `liveAccountSyncDebounceMs` | `250` | Debounce interval (min 50ms) |
+| `liveAccountSyncPollMs` | `2000` | Polling interval (min 500ms) |
+
+## Session Affinity Settings
+
+Control session-to-account affinity:
+
+```json
+{
+  "sessionAffinity": true,
+  "sessionAffinityTtlMs": 1200000,
+  "sessionAffinityMaxEntries": 512
+}
+```
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `sessionAffinity` | `true` | Enable session affinity |
+| `sessionAffinityTtlMs` | `1200000` | TTL per session (20 minutes) |
+| `sessionAffinityMaxEntries` | `512` | Max tracked sessions (min 8) |
+
+## Proactive Refresh Settings
+
+Background token refresh before expiration:
+
+```json
+{
+  "proactiveRefreshGuardian": true,
+  "proactiveRefreshIntervalMs": 60000,
+  "proactiveRefreshBufferMs": 300000
+}
+```
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `proactiveRefreshGuardian` | `true` | Enable proactive refresh |
+| `proactiveRefreshIntervalMs` | `60000` | Check interval (min 5000ms) |
+| `proactiveRefreshBufferMs` | `300000` | Refresh buffer (min 30000ms) |
+
+Tokens are refreshed when `expires_at - now < proactiveRefreshBufferMs`.
+
+## Validating Configuration
+
+Verify effective configuration with these commands:
+
+```bash
+# Check overall status
+codex auth status
+
+# List accounts (verifies storage paths)
+codex auth list
+
+# Health check (verifies timeouts and sync)
+codex auth check
+
+# Live forecast (verifies quota settings)
+codex auth forecast --live
+```
+
+## Storage Paths
+
+Default storage locations (customizable via `CODEX_MULTI_AUTH_DIR`):
+
+| File | Path |
+| --- | --- |
+| Settings | `~/.codex/multi-auth/settings.json` |
+| Global accounts | `~/.codex/multi-auth/openai-codex-accounts.json` |
+| Project accounts | `~/.codex/multi-auth/projects/<key>/openai-codex-accounts.json` |
+| Flagged accounts | `~/.codex/multi-auth/openai-codex-flagged-accounts.json` |
+| Quota cache | `~/.codex/multi-auth/quota-cache.json` |
+| Audit log | `~/.codex/multi-auth/audit.log` |
+
+See [Storage Paths Reference](/cli/storage-paths) for full details.
+
+## Legacy Compatibility
+
+Legacy config files are discovered during migration:
+
+- `~/.codex/codex-multi-auth-config.json` (legacy)
+- `~/.codex/openai-codex-auth-config.json` (legacy)
+
+These paths are checked only if unified settings are absent. **Prefer unified settings** for new setups.
+
+## Related Resources
+
+- [Settings Reference](/cli/settings-reference) — Full settings schema
+- [Storage Paths Reference](/cli/storage-paths) — File locations
+- [Upgrading Guide](/guides/upgrading) — Migration instructions
+- [CONFIG_FLOW.md](https://github.com/ndycode/codex-multi-auth/blob/main/docs/development/CONFIG_FLOW.md) — Config resolution logic

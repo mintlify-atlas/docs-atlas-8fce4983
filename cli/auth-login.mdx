@@ -1,0 +1,212 @@
+---
+title: codex auth login
+description: Open the interactive account management dashboard
+---
+
+Open the interactive terminal dashboard for managing accounts, running diagnostics, and configuring settings.
+
+## Usage
+
+```bash
+codex auth login
+```
+
+This command launches the full-screen TUI (terminal user interface) dashboard.
+
+## What It Does
+
+1. **Launches OAuth flow** - Opens your browser to sign in with ChatGPT
+2. **Manages existing accounts** - View, switch, refresh, or delete accounts
+3. **Health monitoring** - Real-time quota and session status
+4. **Settings configuration** - Interactive settings editor
+5. **Account deduplication** - Automatically merges accounts by token/email/ID
+
+## Dashboard Hotkeys
+
+### Main Dashboard
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move selection |
+| `Enter` | Select/open |
+| `1-9` | Quick switch to visible account |
+| `/` | Search accounts |
+| `?` | Toggle help panel |
+| `Q` | Back/cancel |
+
+### Account Details
+
+| Key | Action |
+| --- | --- |
+| `S` | Set as current account |
+| `R` | Refresh/re-login account |
+| `E` | Enable/disable account |
+| `D` | Delete account |
+| `Q` | Back to main menu |
+
+### Settings Screens
+
+| Key | Action |
+| --- | --- |
+| `Enter` | Toggle/select option |
+| `1-9` | Quick toggle numbered options |
+| `S` | Save changes |
+| `R` | Reset to defaults |
+| `Q` | Cancel without saving |
+| `[` / `]` | Reorder summary fields |
+| `+` / `-` | Adjust numeric settings |
+
+## OAuth Flow Modes
+
+### Browser Mode (Default)
+
+The CLI attempts to open your default browser automatically:
+
+```
+◆  Choose sign-in mode:
+   ○ Open browser and sign in
+   ○ Copy URL and paste callback manually
+   ○ Back/cancel
+```
+
+Select "Open browser and sign in" to launch the OAuth flow.
+
+### Manual Mode
+
+If browser launch fails or you prefer manual control:
+
+1. Select "Copy URL and paste callback manually"
+2. The OAuth URL is copied to your clipboard
+3. Open the URL in any browser
+4. Complete the sign-in flow
+5. Copy the callback URL from the success page
+6. Paste it back in the terminal
+
+The CLI accepts these callback formats:
+
+- Full URL: `http://127.0.0.1:1455/auth/callback?code=...&state=...`
+- Just the code: `abc123...`
+- Query string: `?code=abc123&state=xyz`
+
+## Account Deduplication
+
+When you log in with an existing account, it's automatically merged by:
+
+1. **Refresh token** (highest priority)
+2. **Account ID** (from JWT)
+3. **Email address** (case-insensitive)
+
+This prevents duplicate entries and preserves:
+
+- Last used timestamp
+- Custom account labels
+- Health scores
+- Rate limit tracking
+
+## Examples
+
+### First-time login
+
+```bash
+codex auth login
+# Opens dashboard → select "Add account" → OAuth flow
+```
+
+### Add another account
+
+```bash
+codex auth login
+# Opens dashboard → select "Add account" → force new login
+```
+
+### Refresh existing account
+
+```bash
+codex auth login
+# Opens dashboard → select account → press R
+```
+
+## OAuth Callback Server
+
+The CLI starts a local HTTP server on `http://127.0.0.1:1455` to receive OAuth callbacks.
+
+<ParamField path="Port" type="number" default="1455">
+  Fixed port for OAuth callbacks. Cannot be changed (hardcoded in ChatGPT OAuth app registration).
+</ParamField>
+
+### Troubleshooting Port Conflicts
+
+If port 1455 is already in use:
+
+```bash
+# Linux/macOS: Find process using port 1455
+lsof -i :1455
+
+# Windows: Find process using port 1455
+netstat -ano | findstr :1455
+
+# Kill the process or use manual callback mode
+```
+
+## Interactive Settings
+
+From the main dashboard, select "Settings" to configure:
+
+- **Display settings** - Menu layout, colors, status badges
+- **Summary settings** - Visible columns, sort order
+- **Behavior settings** - Auto-refresh, session affinity
+- **Theme settings** - Color scheme, glyphs, contrast
+
+All changes are saved to `~/.codex/multi-auth/settings.json`.
+
+Press `Q` in settings to cancel without saving. Theme previews automatically restore on cancel.
+
+## Error Handling
+
+### Missing Browser
+
+```
+! Could not open browser automatically
+→ Go to: https://chatgpt.com/oauth/authorize?...
+✓ URL copied to clipboard
+```
+
+Paste the URL into any browser manually.
+
+### OAuth Callback Timeout
+
+```
+! OAuth callback not received in time
+→ Paste the callback URL or code manually:
+```
+
+Copy the callback URL from your browser and paste it.
+
+### Token Exchange Failed
+
+```
+✗ Token exchange failed: invalid_grant
+```
+
+The authorization code expired or was already used. Restart the flow:
+
+```bash
+codex auth login
+```
+
+## Related Commands
+
+- [`codex auth list`](/cli/auth-list) - List all accounts without opening dashboard
+- [`codex auth status`](/cli/auth-status) - Quick status summary
+- [`codex auth switch`](/cli/auth-switch) - Switch active account by index
+- [`codex auth check`](/cli/auth-check) - Health check all accounts
+
+## Storage Impact
+
+This command writes to:
+
+- `~/.codex/multi-auth/openai-codex-accounts.json` - Account pool
+- `~/.codex/multi-auth/settings.json` - Dashboard preferences
+- `~/.codex/cli/state.json` - Active account sync (Codex CLI)
+
+Backups are created with `.backup` suffix before destructive operations.

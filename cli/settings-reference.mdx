@@ -1,0 +1,347 @@
+---
+title: 'settings.json Reference'
+description: 'Complete reference for all settings.json configuration fields'
+---
+
+## Overview
+
+The `settings.json` file is the unified configuration file for Codex Multi-Auth. It contains all plugin configuration and dashboard display settings in a single JSON file.
+
+**Default Location:** `~/.codex/multi-auth/settings.json`
+
+When `CODEX_MULTI_AUTH_DIR` is set, this root moves accordingly.
+
+## File Structure
+
+The settings file contains two top-level sections:
+
+```json
+{
+  "version": 1,
+  "pluginConfig": { /* ... */ },
+  "dashboardDisplaySettings": { /* ... */ }
+}
+```
+
+---
+
+## Plugin Configuration
+
+The `pluginConfig` section contains all backend behavior settings.
+
+### Codex Mode
+
+<ParamField path="codexMode" type="boolean" default="true">
+  Enable CODEX_MODE for better Codex CLI parity. When enabled, uses bridge prompts instead of tool remapping.
+</ParamField>
+
+<ParamField path="codexTuiV2" type="boolean" default="true">
+  Enable the v2 terminal user interface with enhanced features.
+</ParamField>
+
+<ParamField path="codexTuiColorProfile" type="string" default="truecolor">
+  TUI color profile mode. Options: `truecolor`, `ansi16`, `ansi256`
+</ParamField>
+
+<ParamField path="codexTuiGlyphMode" type="string" default="ascii">
+  TUI glyph rendering mode. Options: `ascii`, `unicode`, `auto`
+</ParamField>
+
+### Session Management
+
+<ParamField path="fastSession" type="boolean" default="false">
+  Enable fast session optimization for reduced latency.
+</ParamField>
+
+<ParamField path="fastSessionStrategy" type="string" default="hybrid">
+  Fast session selection strategy. Options: `hybrid`, `always`
+</ParamField>
+
+<ParamField path="fastSessionMaxInputItems" type="number" default="30">
+  Maximum number of input items for fast session mode. Minimum: 8
+</ParamField>
+
+<ParamField path="sessionRecovery" type="boolean" default="true">
+  Enable conversation state persistence and recovery.
+</ParamField>
+
+<ParamField path="autoResume" type="boolean" default="true">
+  Automatically resume interrupted sessions.
+</ParamField>
+
+<ParamField path="sessionAffinity" type="boolean" default="true">
+  Enable session-to-account affinity to maintain conversation context.
+</ParamField>
+
+<ParamField path="sessionAffinityTtlMs" type="number" default="1200000">
+  Session affinity time-to-live in milliseconds (20 minutes). Minimum: 1000
+</ParamField>
+
+<ParamField path="sessionAffinityMaxEntries" type="number" default="512">
+  Maximum number of session affinity entries to cache. Minimum: 8
+</ParamField>
+
+### Account Management
+
+<ParamField path="perProjectAccounts" type="boolean" default="true">
+  Enable per-project account storage and isolation.
+</ParamField>
+
+<ParamField path="liveAccountSync" type="boolean" default="true">
+  Enable real-time account synchronization across processes.
+</ParamField>
+
+<ParamField path="liveAccountSyncDebounceMs" type="number" default="250">
+  Debounce interval for live account sync in milliseconds. Minimum: 50
+</ParamField>
+
+<ParamField path="liveAccountSyncPollMs" type="number" default="2000">
+  Polling interval for live account sync in milliseconds. Minimum: 500
+</ParamField>
+
+### Token Refresh
+
+<ParamField path="tokenRefreshSkewMs" type="number" default="60000">
+  Token refresh skew window in milliseconds (1 minute). Minimum: 0
+</ParamField>
+
+<ParamField path="proactiveRefreshGuardian" type="boolean" default="true">
+  Enable proactive token refresh to prevent expiry during active sessions.
+</ParamField>
+
+<ParamField path="proactiveRefreshIntervalMs" type="number" default="60000">
+  Proactive refresh check interval in milliseconds (1 minute). Minimum: 5000
+</ParamField>
+
+<ParamField path="proactiveRefreshBufferMs" type="number" default="300000">
+  Buffer time before expiry to trigger proactive refresh in milliseconds (5 minutes). Minimum: 30000
+</ParamField>
+
+### Retry and Error Handling
+
+<ParamField path="retryAllAccountsRateLimited" type="boolean" default="true">
+  Retry all accounts when rate limited instead of failing immediately.
+</ParamField>
+
+<ParamField path="retryAllAccountsMaxWaitMs" type="number" default="0">
+  Maximum wait time for retry-all-accounts in milliseconds. 0 = no limit. Minimum: 0
+</ParamField>
+
+<ParamField path="retryAllAccountsMaxRetries" type="number" default="Infinity">
+  Maximum number of retry attempts when all accounts are rate limited. Minimum: 0
+</ParamField>
+
+<ParamField path="emptyResponseMaxRetries" type="number" default="2">
+  Maximum retry attempts for empty responses. Minimum: 0
+</ParamField>
+
+<ParamField path="emptyResponseRetryDelayMs" type="number" default="1000">
+  Delay between empty response retries in milliseconds. Minimum: 0
+</ParamField>
+
+<ParamField path="networkErrorCooldownMs" type="number" default="6000">
+  Cooldown period after network errors in milliseconds. Minimum: 0
+</ParamField>
+
+<ParamField path="serverErrorCooldownMs" type="number" default="4000">
+  Cooldown period after server (5xx) errors in milliseconds. Minimum: 0
+</ParamField>
+
+### Model Fallback
+
+<ParamField path="unsupportedCodexPolicy" type="string" default="strict">
+  Policy for handling unsupported Codex models. Options: `strict`, `fallback`
+  
+  - `strict`: Fail immediately when model is not supported
+  - `fallback`: Attempt to use fallback models from the fallback chain
+</ParamField>
+
+<ParamField path="fallbackOnUnsupportedCodexModel" type="boolean" default="false">
+  **Legacy field.** Use `unsupportedCodexPolicy: "fallback"` instead.
+</ParamField>
+
+<ParamField path="fallbackToGpt52OnUnsupportedGpt53" type="boolean" default="true">
+  Automatically fallback to GPT-5.2 when GPT-5.3 is not supported.
+</ParamField>
+
+<ParamField path="unsupportedCodexFallbackChain" type="object" default="{}">
+  Custom model fallback chains. Maps model names to arrays of fallback models.
+  
+  Example:
+  ```json
+  {
+    "gpt-5.3": ["gpt-5.2", "gpt-4o"],
+    "claude-4.5": ["claude-3.5"]
+  }
+  ```
+</ParamField>
+
+### Timeouts
+
+<ParamField path="fetchTimeoutMs" type="number" default="60000">
+  HTTP fetch timeout for requests in milliseconds (1 minute). Minimum: 1000
+</ParamField>
+
+<ParamField path="streamStallTimeoutMs" type="number" default="45000">
+  Stream stall detection timeout in milliseconds (45 seconds). Minimum: 1000
+</ParamField>
+
+<ParamField path="rateLimitToastDebounceMs" type="number" default="60000">
+  Debounce interval for rate limit toast notifications in milliseconds (1 minute). Minimum: 0
+</ParamField>
+
+<ParamField path="toastDurationMs" type="number" default="5000">
+  Toast notification display duration in milliseconds (5 seconds). Minimum: 1000
+</ParamField>
+
+### Preemptive Quota
+
+<ParamField path="preemptiveQuotaEnabled" type="boolean" default="true">
+  Enable preemptive quota checking to avoid hitting limits.
+</ParamField>
+
+<ParamField path="preemptiveQuotaRemainingPercent5h" type="number" default="5">
+  Remaining percentage threshold for 5-hour quota window. Range: 0-100
+</ParamField>
+
+<ParamField path="preemptiveQuotaRemainingPercent7d" type="number" default="5">
+  Remaining percentage threshold for 7-day quota window. Range: 0-100
+</ParamField>
+
+<ParamField path="preemptiveQuotaMaxDeferralMs" type="number" default="7200000">
+  Maximum deferral time for quota-limited accounts in milliseconds (2 hours). Minimum: 1000
+</ParamField>
+
+### Advanced Features
+
+<ParamField path="parallelProbing" type="boolean" default="false">
+  Enable parallel account health probing for faster selection.
+</ParamField>
+
+<ParamField path="parallelProbingMaxConcurrency" type="number" default="2">
+  Maximum concurrent probes when parallel probing is enabled. Minimum: 1
+</ParamField>
+
+<ParamField path="pidOffsetEnabled" type="boolean" default="false">
+  Enable process ID offset for multi-process environments.
+</ParamField>
+
+<ParamField path="storageBackupEnabled" type="boolean" default="true">
+  Enable automatic storage backups (.bak files).
+</ParamField>
+
+---
+
+## Dashboard Display Settings
+
+The `dashboardDisplaySettings` section controls the interactive CLI dashboard appearance and behavior.
+
+### Account List View
+
+Controls how accounts are displayed in the dashboard:
+
+- Status badge visibility
+- Current account badge visibility
+- Last-used timestamp display
+- Quota/cooldown information
+- Fetch status indicators
+- Current row highlighting
+- Smart sort enable and mode
+- Compact vs expanded layout
+
+### Summary Fields
+
+Controls which detail fields are shown and their order:
+
+- `last-used` - Last usage timestamp
+- `limits` - Rate limit and quota information
+- `status` - Account health status
+
+### Behavior
+
+Controls dashboard interaction behavior:
+
+- Auto-return delay after actions
+- Pause-on-key behavior
+- Auto-fetch limits configuration
+- Fetch TTL (time-to-live)
+
+### Theme
+
+Controls visual styling:
+
+- Theme preset selection
+- Accent color customization
+- Focus style preferences
+
+---
+
+## Quick Reference Table
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `codexMode` | boolean | `true` | Enable CODEX_MODE |
+| `perProjectAccounts` | boolean | `true` | Per-project account isolation |
+| `liveAccountSync` | boolean | `true` | Real-time account sync |
+| `sessionAffinity` | boolean | `true` | Session-to-account affinity |
+| `sessionRecovery` | boolean | `true` | Conversation state persistence |
+| `proactiveRefreshGuardian` | boolean | `true` | Proactive token refresh |
+| `preemptiveQuotaEnabled` | boolean | `true` | Preemptive quota checking |
+| `retryAllAccountsRateLimited` | boolean | `true` | Retry all when rate limited |
+| `storageBackupEnabled` | boolean | `true` | Automatic backups |
+| `fetchTimeoutMs` | number | `60000` | Request timeout (ms) |
+| `streamStallTimeoutMs` | number | `45000` | Stream stall timeout (ms) |
+| `tokenRefreshSkewMs` | number | `60000` | Token refresh window (ms) |
+| `sessionAffinityTtlMs` | number | `1200000` | Session affinity TTL (ms) |
+
+---
+
+## Editing Settings
+
+### Via Dashboard
+
+Access settings through the CLI:
+
+```bash
+codex auth login
+# Navigate to Settings menu
+```
+
+Press **Q** to cancel without saving.
+
+### Manual Editing
+
+Edit `~/.codex/multi-auth/settings.json` directly:
+
+```json
+{
+  "version": 1,
+  "pluginConfig": {
+    "codexMode": true,
+    "perProjectAccounts": true,
+    "sessionAffinity": true
+  },
+  "dashboardDisplaySettings": {
+    "theme": "default"
+  }
+}
+```
+
+---
+
+## Validation
+
+After making changes, verify settings:
+
+```bash
+codex auth status
+codex auth check
+```
+
+---
+
+## Related
+
+- [Environment Variables](/cli/environment-variables)
+- [Storage Paths](/cli/storage-paths)
+- [Configuration Guide](/guides/configuration)

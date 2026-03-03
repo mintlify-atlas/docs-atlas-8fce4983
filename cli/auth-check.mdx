@@ -1,0 +1,268 @@
+---
+title: codex auth check
+description: Run quick account health checks and validate tokens
+---
+
+Validate all saved accounts by testing token validity and optionally probing live quota status.
+
+## Usage
+
+```bash
+codex auth check [--live] [--model <model>]
+```
+
+<ParamField path="--live" type="boolean" default="false">
+  Perform live quota probes for each account using actual API requests.
+</ParamField>
+
+<ParamField path="--model" type="string" default="gpt-5-codex">
+  Model to use for live quota probes (only with `--live`).
+</ParamField>
+
+## How It Works
+
+### Quick Check (Default)
+
+1. Loads all accounts from storage
+2. Checks access token expiry times
+3. For expired tokens, attempts token refresh
+4. Updates account metadata (email, account ID)
+5. Saves changes back to storage
+
+### Live Check (`--live`)
+
+1. Performs all quick check steps
+2. Makes a minimal API request per account
+3. Fetches real-time quota usage (5h and 7d windows)
+4. Detects rate limits and updates cooldowns
+5. Caches quota data for dashboard use
+
+## Example Output
+
+### Quick Check
+
+```
+Checking 4 account(s) with quick check...
+  ✓ alice@example.com | signed in and working
+  ✓ bob@work.com | working now
+  ! carol@personal.com | refresh failed (invalid_grant) but this account still works right now
+  ✗ dave@test.com | refresh_token_reused
+
+Result: 3 working | 1 need re-login | 1 warning
+```
+
+### Live Check
+
+```
+Checking 4 account(s) with quick check + live check...
+  ✓ alice@example.com | live session OK (5h 95% | 7d 87%)
+  ✓ bob@work.com | live session OK (5h 12% | 7d 45%)
+  ! carol@personal.com | working now (live check failed: timeout)
+  ✗ dave@test.com | rate-limited
+
+Result: 2 working | 1 need re-login | 1 warning
+```
+
+## Output Symbols
+
+<ParamField path="✓" type="symbol">
+  Account is healthy and working
+</ParamField>
+
+<ParamField path="!" type="symbol">
+  Warning - account works but has issues (refresh failed, probe timeout)
+</ParamField>
+
+<ParamField path="✗" type="symbol">
+  Error - account needs re-login or is rate-limited
+</ParamField>
+
+## Quota Display Format
+
+When `--live` is used, quota is shown as:
+
+```
+5h 95% | 7d 87%
+```
+
+- `5h` = 5-hour quota window (percentage remaining)
+- `7d` = 7-day quota window (percentage remaining)
+
+Lower percentages mean more quota consumed.
+
+## Result Summary
+
+The final line shows:
+
+- **Working** - Accounts with valid tokens and no issues
+- **Need re-login** - Accounts with expired/invalid refresh tokens
+- **Warnings** - Accounts that work now but may fail soon
+
+## Exit Codes
+
+<ParamField path="0" type="exit code">
+  All accounts passed checks (or warnings only)
+</ParamField>
+
+<ParamField path="1" type="exit code">
+  One or more accounts need re-login
+</ParamField>
+
+## When to Use Each Mode
+
+### Quick Check
+
+Use for fast daily validation:
+
+```bash
+codex auth check
+```
+
+Good for:
+- Morning health checks
+- Pre-session validation
+- CI/CD pipelines (fast)
+
+### Live Check
+
+Use before long sessions or when quota matters:
+
+```bash
+codex auth check --live --model gpt-5-codex
+```
+
+Good for:
+- Pre-deployment checks
+- Quota planning
+- Debugging rate limits
+- Verifying account rotations
+
+## Automatic Repairs
+
+The check command automatically:
+
+- **Refreshes expired tokens** - If access token expired but refresh token valid
+- **Updates email addresses** - Syncs from ID token
+- **Syncs account IDs** - Extracts from JWT `sub` claim
+- **Re-enables accounts** - If previously disabled but now working
+- **Updates quota cache** - Stores live probe results
+
+## Examples
+
+### Daily health check
+
+```bash
+codex auth check
+```
+
+### Pre-session quota check
+
+```bash
+codex auth check --live
+```
+
+### Check with specific model
+
+```bash
+codex auth check --live --model gpt-5-turbo
+```
+
+### Check and switch to best account
+
+```bash
+codex auth check --live
+codex auth forecast --live
+codex auth switch 1  # Based on forecast
+```
+
+### Automated monitoring
+
+```bash
+#!/bin/bash
+if ! codex auth check --live; then
+  echo "Some accounts need attention"
+  codex auth report --json > health-report.json
+fi
+```
+
+## Performance
+
+### Quick Check
+
+- **Speed**: ~1-2 seconds for 10 accounts
+- **Network**: Only for token refresh (if needed)
+- **Rate limits**: No impact (uses refresh endpoint)
+
+### Live Check
+
+- **Speed**: ~2-3 seconds per account
+- **Network**: 1 API request per account
+- **Rate limits**: Minimal impact (single request)
+
+For 10 accounts: ~30 seconds total.
+
+## Troubleshooting
+
+### All Accounts Fail Quick Check
+
+```bash
+# Network or auth service issue
+codex auth check
+# Wait 5 minutes and retry
+```
+
+### Live Check Times Out
+
+```bash
+# Increase timeout (default 10s)
+CODEX_AUTH_FETCH_TIMEOUT_MS=30000 codex auth check --live
+```
+
+### "Working now" but refresh failed
+
+The account's access token is still valid, but the refresh token is broken. Re-login soon:
+
+```bash
+codex auth login
+# Select the account → press R to refresh
+```
+
+### Rate-Limited Accounts
+
+Wait for the cooldown to expire:
+
+```bash
+codex auth list
+# Check cooldown duration in [cooldown:2h30m] marker
+```
+
+Or switch to another account:
+
+```bash
+codex auth forecast --live
+codex auth switch 2
+```
+
+## Related Commands
+
+- [`codex auth status`](/cli/auth-status) - Quick status without validation
+- [`codex auth forecast`](/cli/auth-forecast) - Predict best account
+- [`codex auth report`](/cli/auth-report) - Detailed health report
+- [`codex auth fix`](/cli/auth-fix) - Repair broken accounts
+- [`codex auth doctor`](/cli/auth-doctor) - Full diagnostics
+
+## Caching Behavior
+
+Live check results are cached in:
+
+```
+~/.codex/multi-auth/quota-cache.json
+```
+
+Cache is used by:
+
+- Dashboard quota display
+- Forecast scoring
+- Account rotation decisions
+
+Cache TTL: 5 minutes (default)

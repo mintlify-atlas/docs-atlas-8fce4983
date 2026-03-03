@@ -1,0 +1,215 @@
+---
+title: Account Details
+description: View and manage individual account information and actions
+---
+
+The account details view provides comprehensive information about a specific account and allows you to perform account-level actions.
+
+## Accessing Account Details
+
+From the main dashboard:
+
+1. Navigate to an account using `Up`/`Down` arrows
+2. Press `Enter` to open the account details view
+
+Alternatively, use quick switch (`1-9`) then press `Enter` on the selected account.
+
+## Account Information Display
+
+### Header
+
+The account detail header shows:
+
+```
+1. demo@example.com [active] [current]
+```
+
+- **Account number**: Position in the account list
+- **Email/Label**: Primary account identifier
+- **Status badge**: Current health state (`[active]`, `[ok]`, `[rate-limited]`, `[cooldown]`, `[flagged]`, `[disabled]`, `[error]`)
+- **Current badge**: `[current]` if this is the active Codex account
+- **Disabled badge**: `[disabled]` if account is explicitly disabled
+
+### Subtitle Information
+
+The subtitle displays key account metadata:
+
+```
+Added: 1/15/2026  |  Used: today  |  Status: active
+```
+
+- **Added**: Date the account was first authenticated
+- **Used**: Last usage timestamp (relative time: "today", "yesterday", "2d ago", "1w ago", or absolute date)
+- **Status**: Current health status in text form
+
+## Available Actions
+
+The account details view provides the following actions:
+
+### Set Current Account (`S`)
+
+Makes this account the active account for Codex operations.
+
+**When to use**:
+- Switch to a specific account immediately
+- Override automatic rotation for testing
+- Pin an account for an extended session
+
+**Behavior**:
+- Updates the active account index in storage
+- Account becomes the primary choice for new requests
+- Green highlight indicates this is a positive action
+
+### Refresh/Re-login (`R`)
+
+Re-authenticates the account using OAuth flow.
+
+**When to use**:
+- Token has expired or is about to expire
+- Account shows `[error]` or `[flagged]` status
+- After manual token revocation
+- To obtain fresh quota information
+
+**Behavior**:
+1. Confirmation prompt displays: `Re-authenticate demo@example.com?`
+2. If confirmed, opens browser for OAuth flow
+3. New tokens replace existing credentials
+4. Account health resets to full (100)
+5. Quota cache refreshes
+
+### Enable/Disable (`E`)
+
+Toggles whether the account is eligible for rotation.
+
+**When to use**:
+- Temporarily exclude an account from rotation
+- Preserve an account for manual use only
+- Remove an account from automatic selection without deletion
+
+**Disabled accounts**:
+- Do not participate in automatic rotation
+- Can still be manually selected with `codex auth switch <index>`
+- Display `[disabled]` badge in account list
+- Yellow highlight indicates conditional state
+
+**Enabled accounts**:
+- Participate in health-based rotation
+- Eligible for automatic selection
+- Green highlight indicates active participation
+
+### Delete Account (`D`)
+
+Permanently removes the account from storage.
+
+**When to use**:
+- Account is no longer needed
+- Credentials have been revoked externally
+- Cleaning up duplicate or test accounts
+
+**Behavior**:
+1. Confirmation prompt displays: `Delete demo@example.com?`
+2. If confirmed, removes account from storage file
+3. Adjusts current account index if needed
+4. Cannot be undone (requires re-authentication to restore)
+5. Red highlight indicates destructive action
+
+### Back (`Q`)
+
+Returns to the main dashboard without making changes.
+
+## Account Status Reference
+
+| Status | Badge Color | Meaning | Common Causes |
+| --- | --- | --- | --- |
+| `active` | Green | Currently in use and healthy | Account is the current selection and passed health checks |
+| `ok` | Green | Healthy and available | Account passed recent health checks |
+| `rate-limited` | Yellow | Hit quota limits | 5h or 7d quota exhausted |
+| `cooldown` | Yellow | Temporary restriction | Recent rate limit, waiting for reset |
+| `flagged` | Red | Failed authentication | Token expired, invalid, or revoked |
+| `disabled` | Red | Manually disabled | User disabled via Enable/Disable action |
+| `error` | Red | Request failure | Network error, server error, or invalid response |
+| `unknown` | Gray | No recent status data | New account or missing health check |
+
+## Quota Display
+
+If quota information is available, account details may show:
+
+```
+Limits: 5h ██████▒▒▒▒ 62% reset 1h 20m  |  7d █████▒▒▒▒▒ 49% reset 2d 4h
+```
+
+### Quota Components
+
+- **5h**: Rolling 5-hour window
+- **7d**: Rolling 7-day window
+- **Bar**: Visual capacity indicator (10 segments)
+- **Percentage**: Remaining quota (0-100%)
+- **Reset timer**: Time until quota window resets (shown if enabled in settings)
+
+### Quota Colors
+
+- **Green**: 36-100% remaining
+- **Yellow**: 16-35% remaining
+- **Red**: 0-15% remaining
+
+## Last Used Timestamps
+
+| Display | Meaning |
+| --- | --- |
+| `today` | Used within the last 24 hours, current day |
+| `yesterday` | Used on the previous calendar day |
+| `2d ago` | Used 2 days ago |
+| `1w ago` | Used 1 week ago |
+| `2/28/2026` | Used on a specific date (more than 30 days ago) |
+| `never` | Account has never been used for a request |
+
+## Keyboard Shortcuts
+
+| Key | Action | Notes |
+| --- | --- | --- |
+| `S` | Set current account | Immediate switch |
+| `R` | Refresh/re-login | Requires confirmation |
+| `E` | Enable/disable | Toggle participation in rotation |
+| `D` | Delete account | Requires confirmation |
+| `Q` | Back to main dashboard | Cancel without changes |
+
+## Common Workflows
+
+### Fix a Flagged Account
+
+1. Navigate to the account in the main dashboard
+2. Press `Enter` to view details
+3. Verify the account email and status
+4. Press `R` to refresh/re-login
+5. Confirm the re-authentication prompt
+6. Complete OAuth flow in browser
+7. Account returns to healthy state
+
+### Temporarily Disable an Account
+
+1. Open account details
+2. Press `E` to disable
+3. Verify `[disabled]` badge appears
+4. Press `Q` to return to dashboard
+5. Account no longer participates in rotation
+
+### Switch to a Specific Account
+
+1. Open account details
+2. Press `S` to set as current
+3. Press `Q` to return to dashboard
+4. Verify `[current]` badge on the account
+
+### Remove an Unused Account
+
+1. Open account details
+2. Press `D` to delete
+3. Confirm deletion prompt
+4. Account is permanently removed
+
+## Related Commands
+
+- [`codex auth list`](/cli/auth-list): View all accounts from CLI
+- [`codex auth switch <index>`](/cli/auth-switch): Switch account from CLI
+- [`codex auth check`](/cli/auth-check): Run health checks on all accounts
+- [`codex auth verify-flagged`](/cli/auth-verify-flagged): Test flagged accounts and restore healthy ones

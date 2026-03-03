@@ -1,0 +1,311 @@
+---
+title: Plugin Architecture
+description: Understanding the plugin system and tool registration for extending Codex Multi-Auth
+---
+
+# Plugin Architecture
+
+Codex Multi-Auth is built as a Codex CLI plugin using the `@codex-ai/plugin` framework. This architecture enables seamless integration with the Codex runtime while providing multi-account OAuth management and request routing.
+
+## Plugin Structure
+
+The plugin exports a standard Plugin interface from `@codex-ai/plugin` with three main components:
+
+### Core Components
+
+```typescript
+import { tool } from "@codex-ai/plugin/tool";
+import type { Plugin, PluginInput } from "@codex-ai/plugin";
+
+export const OpenAIOAuthPlugin: Plugin = async ({ client }: PluginInput) => {
+  return {
+    event: eventHandler,    // Handle runtime events
+    auth: { ... },          // OAuth authentication provider
+    tools: { ... },         // Registered tool handlers
+  };
+};
+```
+
+## Authentication Provider
+
+The plugin registers as an OAuth provider with the Codex runtime:
+
+```typescript
+auth: {
+  provider: "openai",
+  async loader(getAuth, provider) {
+    // 1. Load multi-account pool from disk
+    // 2. Apply per-project/global storage scope
+    // 3. Return SDK configuration with custom fetch
+    return {
+      apiKey: "codex-dummy-key",
+      baseURL: "https://chatgpt.com",
+      fetch: customFetchImplementation
+    };
+  }
+}
+```
+
+### Custom Fetch Pipeline
+
+The plugin intercepts all OpenAI SDK calls with a 7-step request pipeline:
+
+1. **URL Rewriting**: `/v1/chat/completions` → `https://chatgpt.com/backend-api/conversation`
+2. **Token Refresh**: Check expiry, refresh if needed (with skew window)
+3. **Request Transform**: Inject model-specific Codex instructions, apply fast-session defaults
+4. **Account Selection**: Choose account based on health, rate limits, session affinity
+5. **Header Injection**: Add OAuth bearer token, Codex-specific headers
+6. **Stream Handling**: Convert SSE to JSON, handle failover on stream errors
+7. **Error Recovery**: Retry with backoff, rotate accounts on rate limits
+
+## Tool Registration
+
+The plugin registers tools using the `@codex-ai/plugin/tool` API:
+
+```typescript
+import { tool } from "@codex-ai/plugin/tool";
+
+const hashlineReadTool = tool({
+  description: "Read file lines with hashline refs (L<line>#<hash>)",
+  args: {
+    path: tool.schema.string().describe("File path"),
+    startLine: tool.schema.number().optional(),
+    maxLines: tool.schema.number().optional()
+  },
+  async execute({ path, startLine, maxLines }, context) {
+    const absolutePath = resolveToolPath(path, context);
+    await context.ask({ permission: "read", patterns: [absolutePath] });
+    const content = await readFile(absolutePath, "utf8");
+    return renderHashlineSlice(content, startLine, maxLines);
+  }
+});
+```
+
+### Tool Context
+
+Tools receive a `ToolContext` with session metadata:
+
+```typescript
+interface ToolContext {
+  directory: string;      // Session working directory
+  worktree?: string;      // Git worktree root (if available)
+  ask(options): Promise<void>;  // Permission request API
+}
+```
+
+## Hashline Tools
+
+The plugin provides two advanced file editing tools:
+
+### hashline_read
+
+Reads files with SHA-1 hash verification for each line:
+
+```typescript
+{
+  path: "src/index.ts",
+  startLine: 100,
+  maxLines: 50
+}
+// Returns:
+// L100#a3f2c8d1 | export const foo = () => {
+// L101#b9e4f7a2 |   return "bar";
+// L102#c5d1a8f3 | };
+```
+
+### hashline_edit
+
+Performs hash-verified line edits with deterministic operation modes:
+
+**Replace Operation**:
+```typescript
+{
+  path: "src/index.ts",
+  lineRef: "L100#a3f2c8d1",
+  operation: "replace",
+  content: "export const foo = (value: string) => {\n  return value;\n}"
+}
+```
+
+**Insert Operations**:
+```typescript
+// Insert before line
+{
+  lineRef: "L50#abc123",
+  operation: "insert_before",
+  content: "// New comment\n"
+}
+
+// Insert after line
+{
+  lineRef: "L50#abc123",
+  operation: "insert_after",
+  content: "console.log('debug');\n"
+}
+```
+
+**Delete Operation**:
+```typescript
+// Delete single line
+{
+  lineRef: "L50#abc123",
+  operation: "delete"
+}
+
+// Delete range
+{
+  lineRef: "L50#abc123",
+  endLineRef: "L55#def456",
+  operation: "delete"
+}
+```
+
+**Legacy Mode Fallback**:
+```typescript
+// Falls back to exact string match when lineRef is absent
+{
+  path: "src/index.ts",
+  oldString: "const foo = 'bar';",
+  newString: "const foo = 'baz';",
+  replaceAll: false  // Fails if multiple matches found
+}
+```
+
+## Event Handler
+
+The plugin listens for runtime events to synchronize account selection:
+
+```typescript
+event: async ({ event }) => {
+  if (event.type === "account.select") {
+    const { index } = event.properties;
+    // Update active account in storage
+    storage.activeIndex = index;
+    await saveAccounts(storage);
+    // Sync to Codex CLI if enabled
+    await syncCodexCliActiveSelection(index);
+  }
+}
+```
+
+Supported events:
+- `account.select` - User switches account via TUI hotkey (1-9)
+- `openai.account.select` - Provider-specific account selection
+
+## Plugin Lifecycle
+
+### Initialization (loader)
+
+1. Load plugin configuration from environment/Codex.json
+2. Apply UI theme and runtime settings
+3. Set storage scope (per-project vs global)
+4. Enable session affinity, refresh guardian, preemptive quota
+5. Load account pool with Codex CLI sync reconciliation
+6. Start live account sync watcher (if enabled)
+7. Prewarm Codex instructions and host prompts
+
+### Request Handling (fetch)
+
+1. Sync cached account manager from disk if stale
+2. Extract and rewrite request URL
+3. Parse request body, capture original stream flag
+4. Transform request with Codex instructions
+5. Resolve session affinity key from `CODEX_THREAD_ID` or `prompt_cache_key`
+6. Select account (prefer session-pinned, fallback to health-scored rotation)
+7. Execute request with retry/failover logic
+8. Update account health, rate limits, quota metadata
+9. Save updated storage on rotation or token refresh
+
+### Shutdown
+
+Cleanup handlers registered via `registerCleanup()`:
+- Stop live account sync watcher
+- Stop refresh guardian interval
+- Flush pending storage writes
+
+## Advanced Tool Development
+
+When creating custom tools for the plugin:
+
+### Permission Requests
+
+Always request permissions before file access:
+
+```typescript
+await context.ask({
+  permission: "read",
+  patterns: [absolutePath],
+  always: [absolutePath],  // Skip prompt for this path in future
+  metadata: { path: absolutePath }
+});
+```
+
+### Path Resolution
+
+Resolve paths relative to session directory:
+
+```typescript
+function resolveToolPath(pathValue: string, context: ToolContext): string {
+  const trimmed = pathValue.trim();
+  const baseDir = context.directory || process.cwd();
+  return normalize(isAbsolute(trimmed) ? trimmed : resolve(baseDir, trimmed));
+}
+```
+
+### Display Path Formatting
+
+Show relative paths when possible:
+
+```typescript
+function toDisplayPath(absolutePath: string, context: ToolContext): string {
+  const root = context.worktree || context.directory || process.cwd();
+  const rel = relative(root, absolutePath);
+  if (!rel || rel.startsWith("..")) {
+    return absolutePath;
+  }
+  return rel.replace(/\\/g, "/");  // Unix-style separators
+}
+```
+
+### Error Handling
+
+Return user-friendly error messages:
+
+```typescript
+try {
+  const content = await readFile(absolutePath, "utf8");
+  return processContent(content);
+} catch (error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return `Failed to read ${displayPath}: ${message}`;
+}
+```
+
+## Plugin Configuration
+
+Configure the plugin in your Codex.json:
+
+```json
+{
+  "plugin": ["codex-multi-auth"],
+  "model": "openai/gpt-5-codex",
+  "provider": {
+    "openai": {
+      "options": {
+        "CODEX_MODE": true,
+        "CODEX_FAST_SESSION": false,
+        "CODEX_SESSION_RECOVERY": true,
+        "CODEX_AUTH_PER_PROJECT_ACCOUNTS": false
+      }
+    }
+  }
+}
+```
+
+See [Configuration Reference](/cli/settings-reference) for all available options.
+
+## Next Steps
+
+- [Codex CLI Integration](/advanced/codex-cli-integration) - Sync with @openai/codex CLI
+- [Automation](/advanced/automation) - Use --json flags for CI/CD
+- [Configuration Reference](/cli/settings-reference) - Full settings documentation

@@ -1,0 +1,430 @@
+---
+title: Codex CLI Integration
+description: Sync accounts and authentication state with the official @openai/codex CLI
+---
+
+# Codex CLI Integration
+
+Codex Multi-Auth integrates with the official [@openai/codex](https://github.com/openai/codex) CLI to share authentication state and account management across both tools.
+
+## How Sync Works
+
+### Storage Files
+
+The Codex CLI stores authentication in two files:
+
+```
+~/.codex/
+├── accounts.json    # Multi-account storage (preferred)
+└── auth.json        # Legacy single-account auth
+```
+
+### Sync Direction
+
+Bidirectional sync between Codex Multi-Auth and Codex CLI:
+
+**Codex CLI → Multi-Auth** (on plugin load):
+- Read accounts from `~/.codex/accounts.json` or `~/.codex/auth.json`
+- Merge accounts into local storage by account ID, refresh token, or email
+- Update active account selection if Codex CLI state is newer
+
+**Multi-Auth → Codex CLI** (on account switch):
+- Write active account tokens to `~/.codex/auth.json`
+- Update `active: true` flag in `~/.codex/accounts.json`
+- Set `activeAccountId` and `activeEmail` metadata
+
+## Enabling Sync
+
+### Environment Variable
+
+Sync is enabled by default. To explicitly control:
+
+```bash
+# Enable sync (default)
+export CODEX_MULTI_AUTH_SYNC_CODEX_CLI=1
+
+# Disable sync
+export CODEX_MULTI_AUTH_SYNC_CODEX_CLI=0
+```
+
+**Legacy variable** (deprecated but still supported):
+```bash
+export CODEX_AUTH_SYNC_CODEX_CLI=1
+```
+
+### Custom Storage Paths
+
+Override default paths:
+
+```bash
+export CODEX_CLI_ACCOUNTS_PATH="/custom/path/accounts.json"
+export CODEX_CLI_AUTH_PATH="/custom/path/auth.json"
+```
+
+## Account Reconciliation
+
+### Deduplication Logic
+
+When syncing from Codex CLI, accounts are deduplicated using:
+
+1. **Account ID** (highest priority)
+2. **Refresh Token**
+3. **Email** (case-insensitive, normalized)
+
+Example:
+```typescript
+// Codex CLI has:
+// - Account A: id=org-123, email=user@example.com, refresh=token-abc
+
+// Multi-Auth has:
+// - Account B: id=org-123, email=old@example.com, refresh=token-xyz
+
+// After sync, Account B is updated:
+// - Account B: id=org-123, email=user@example.com, refresh=token-abc
+```
+
+### Active Selection Priority
+
+Active account is determined by timestamp comparison:
+
+```typescript
+const codexVersion = state.syncVersion || state.sourceUpdatedAtMs;
+const localVersion = max(
+  getLastAccountsSaveTimestamp(),
+  getLastCodexCliSelectionWriteTimestamp()
+);
+
+if (codexVersion >= localVersion - toleranceMs) {
+  // Apply Codex CLI selection
+} else {
+  // Keep local Multi-Auth selection
+}
+```
+
+Tolerance is 0ms for `syncVersion` (explicit), 1000ms for file mtime (best-effort).
+
+## State Format
+
+### accounts.json
+
+```json
+{
+  "accounts": [
+    {
+      "accountId": "org-abc123",
+      "email": "user@example.com",
+      "auth": {
+        "tokens": {
+          "access_token": "ey...",
+          "refresh_token": "ey...",
+          "id_token": "ey...",
+          "expires_at": 1709500000000,
+          "account_id": "org-abc123"
+        }
+      },
+      "active": true,
+      "isActive": true,
+      "is_active": true
+    }
+  ],
+  "activeAccountId": "org-abc123",
+  "active_account_id": "org-abc123",
+  "activeEmail": "user@example.com",
+  "active_email": "user@example.com",
+  "codexMultiAuthSyncVersion": 1709500000000
+}
+```
+
+### auth.json
+
+```json
+{
+  "auth_mode": "chatgpt",
+  "email": "user@example.com",
+  "tokens": {
+    "access_token": "ey...",
+    "refresh_token": "ey...",
+    "id_token": "ey...",
+    "account_id": "org-abc123"
+  },
+  "last_refresh": "2024-03-03T12:00:00.000Z",
+  "OPENAI_API_KEY": null,
+  "codexMultiAuthSyncVersion": 1709500000000
+}
+```
+
+### Sync Version
+
+The `codexMultiAuthSyncVersion` field is a Unix timestamp (milliseconds) written by Codex Multi-Auth to track the last sync operation. This enables deterministic active-account selection when both tools are used concurrently.
+
+## Writer Module
+
+### setCodexCliActiveSelection
+
+Writes active account to Codex CLI state:
+
+```typescript
+import { setCodexCliActiveSelection } from "codex-multi-auth/lib/codex-cli/writer";
+
+await setCodexCliActiveSelection({
+  accountId: "org-abc123",
+  email: "user@example.com",
+  accessToken: "ey...",
+  refreshToken: "ey...",
+  expiresAt: 1709500000000,
+  idToken: "ey..."
+});
+```
+
+**Returns**: `true` if write succeeded, `false` if sync is disabled or files missing.
+
+### Write Queue
+
+Writes are serialized through a queue to prevent race conditions:
+
+```typescript
+// Multiple concurrent writes are queued
+await Promise.all([
+  setCodexCliActiveSelection(account1),
+  setCodexCliActiveSelection(account2),
+  setCodexCliActiveSelection(account3)
+]);
+// Executes sequentially: account1 → account2 → account3
+```
+
+### Atomic Write Strategy
+
+Writes use temp files + rename for atomic updates:
+
+```typescript
+// 1. Write to temp file
+await fs.writeFile(
+  `${path}.${Date.now()}.tmp`,
+  JSON.stringify(payload, null, 2),
+  { mode: 0o600 }  // Read/write for owner only
+);
+
+// 2. Atomic rename (retries on EBUSY/EPERM)
+for (let attempt = 0; attempt < 5; attempt++) {
+  try {
+    await fs.rename(tempPath, path);
+    break;
+  } catch (error) {
+    if (error.code === "EBUSY" || error.code === "EPERM") {
+      await sleep(10 * 2 ** attempt);  // Exponential backoff
+    } else {
+      throw error;
+    }
+  }
+}
+
+// 3. Clean up temp file
+await fs.unlink(tempPath).catch(() => {});
+```
+
+## Sync Module
+
+### syncAccountStorageFromCodexCli
+
+Reconciles local storage with Codex CLI state:
+
+```typescript
+import { syncAccountStorageFromCodexCli } from "codex-multi-auth/lib/codex-cli/sync";
+
+const current = await loadAccounts();  // Local storage
+const { storage, changed } = await syncAccountStorageFromCodexCli(current);
+
+if (changed) {
+  await saveAccounts(storage);
+}
+```
+
+**Returns**:
+- `storage`: Reconciled storage (may be same as `current` if no changes)
+- `changed`: `true` if storage was modified
+
+### Active Index Normalization
+
+The sync module ensures all active indexes are valid:
+
+```typescript
+function normalizeStoredFamilyIndexes(storage: AccountStorageV3): void {
+  const count = storage.accounts.length;
+  
+  // Clamp global activeIndex to [0, count-1]
+  storage.activeIndex = Math.max(0, Math.min(storage.activeIndex, count - 1));
+  
+  // Clamp per-family indexes
+  for (const family of ["codex", "gpt-5.1", "o1", "o3"]) {
+    const raw = storage.activeIndexByFamily[family] ?? storage.activeIndex;
+    storage.activeIndexByFamily[family] = Math.max(0, Math.min(raw, count - 1));
+  }
+}
+```
+
+## State Module
+
+### loadCodexCliState
+
+Reads Codex CLI state with caching:
+
+```typescript
+import { loadCodexCliState } from "codex-multi-auth/lib/codex-cli/state";
+
+const state = await loadCodexCliState();
+if (state) {
+  console.log(`Loaded ${state.accounts.length} accounts`);
+  console.log(`Active: ${state.activeAccountId} (${state.activeEmail})`);
+  console.log(`Sync version: ${state.syncVersion}`);
+}
+```
+
+**Returns**: `CodexCliState | null`
+
+**Cache**: 5-second TTL in-memory cache (bypass with `forceRefresh: true`)
+
+### lookupCodexCliTokensByEmail
+
+Retrieve tokens for a specific email:
+
+```typescript
+import { lookupCodexCliTokensByEmail } from "codex-multi-auth/lib/codex-cli/state";
+
+const tokens = await lookupCodexCliTokensByEmail("user@example.com");
+if (tokens) {
+  console.log(`Access token: ${tokens.accessToken}`);
+  console.log(`Refresh token: ${tokens.refreshToken}`);
+  console.log(`Expires at: ${new Date(tokens.expiresAt)}`);
+}
+```
+
+**Returns**: `CodexCliTokenCacheEntry | null`
+
+## Observability
+
+The sync modules track metrics:
+
+```typescript
+import { getCodexCliMetrics } from "codex-multi-auth/lib/codex-cli/observability";
+
+const metrics = getCodexCliMetrics();
+console.log(JSON.stringify(metrics, null, 2));
+```
+
+**Metric keys**:
+- `readAttempts` - Calls to `loadCodexCliState`
+- `readSuccesses` - Successful state loads
+- `readFailures` - Failed reads (malformed JSON, ENOENT)
+- `readMisses` - No Codex CLI files found
+- `writeAttempts` - Calls to `setCodexCliActiveSelection`
+- `writeSuccesses` - Successful writes
+- `writeFailures` - Failed writes
+- `reconcileAttempts` - Calls to `syncAccountStorageFromCodexCli`
+- `reconcileChanges` - Reconciliations that modified storage
+- `reconcileNoops` - Reconciliations with no changes
+- `reconcileFailures` - Failed reconciliations
+- `legacySyncEnvUses` - Uses of deprecated `CODEX_AUTH_SYNC_CODEX_CLI`
+
+## Concurrency Considerations
+
+### File Locking
+
+The sync implementation does **not** use file locks. Instead:
+
+1. **Atomic writes** via temp file + rename
+2. **Retry logic** for EBUSY/EPERM errors (Windows antivirus)
+3. **Sync version timestamps** for last-write-wins resolution
+
+This works well for typical use cases but may race if both tools write simultaneously.
+
+### Live Account Sync
+
+When `CODEX_LIVE_ACCOUNT_SYNC=1`, the plugin watches Codex CLI files:
+
+```typescript
+import { LiveAccountSync } from "codex-multi-auth/lib/live-account-sync";
+
+const liveSync = new LiveAccountSync(
+  async () => {
+    // Reload account manager from disk
+    await reloadAccountManagerFromDisk();
+  },
+  {
+    debounceMs: 500,     // Wait 500ms after file change
+    pollIntervalMs: 5000  // Poll every 5s as fallback
+  }
+);
+
+await liveSync.syncToPath(
+  process.env.CODEX_CLI_ACCOUNTS_PATH || "~/.codex/accounts.json"
+);
+```
+
+**Triggers reload** when Codex CLI modifies `accounts.json` or `auth.json`.
+
+## Migration Scenarios
+
+### From Codex CLI to Multi-Auth
+
+1. Existing Codex CLI accounts are auto-imported on first Multi-Auth use
+2. Active selection is preserved based on file timestamps
+3. No manual migration needed
+
+### From Multi-Auth to Codex CLI
+
+1. Switch account in Multi-Auth dashboard
+2. Active selection syncs to `~/.codex/auth.json`
+3. Run `codex auth status` to verify
+
+### Using Both Tools
+
+1. Login via Codex CLI: `codex auth login`
+2. Account appears in Multi-Auth dashboard automatically
+3. Switch account in either tool
+4. Selection syncs within 5 seconds (or immediately if live sync enabled)
+
+## Troubleshooting
+
+### Sync Not Working
+
+Check sync status:
+
+```bash
+# Verify sync is enabled
+codex-multi-auth auth status
+
+# Check Codex CLI files exist
+ls -la ~/.codex/accounts.json ~/.codex/auth.json
+
+# Enable debug logging
+export DEBUG="codex-multi-auth:codex-cli-*"
+codex-multi-auth auth list
+```
+
+### Conflicting Active Accounts
+
+If active account differs between tools:
+
+```bash
+# Force sync from Multi-Auth to Codex CLI
+codex-multi-auth auth switch 0  # Select first account
+
+# Verify sync
+codex auth status
+```
+
+### Permission Errors (Windows)
+
+If writes fail with EBUSY/EPERM:
+
+1. Close any editors with `~/.codex/*.json` open
+2. Temporarily disable antivirus file monitoring for `~/.codex/`
+3. Retry operation
+
+The plugin retries 5 times with exponential backoff, so transient locks usually resolve.
+
+## Next Steps
+
+- [Automation](/advanced/automation) - Use --json flags for CI/CD integration
+- [Plugin System](/advanced/plugin-system) - Understand the plugin architecture
+- [Configuration Reference](/cli/settings-reference) - All sync-related settings

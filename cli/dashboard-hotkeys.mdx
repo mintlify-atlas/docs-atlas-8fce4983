@@ -1,0 +1,147 @@
+---
+title: Dashboard Hotkeys
+description: Complete keyboard shortcut reference for the Codex Multi-Auth interactive dashboard
+---
+
+The interactive dashboard provides keyboard shortcuts for efficient navigation and account management.
+
+## Main Dashboard
+
+The main dashboard displays your account list with health status, quota information, and quick actions.
+
+| Key | Action | Description |
+| --- | --- | --- |
+| `Up` / `Down` | Move selection | Navigate through accounts and menu options |
+| `Enter` | Select/open | Select the highlighted account or action |
+| `1-9` | Quick switch | Instantly switch to visible account by number |
+| `/` | Search accounts | Filter accounts by email, label, or ID |
+| `?` | Toggle help | Show or hide detailed help information |
+| `Q` | Back/cancel | Return to previous screen or exit dashboard |
+
+### Quick Switch Behavior
+
+Number keys (`1-9`) provide instant account switching:
+
+- Works with visible accounts in the current view
+- If smart sort is enabled, numbers follow the sorted order
+- When searching, numbers apply to filtered results only
+- Duplicate numbers are disabled to prevent ambiguity
+
+### Search Mode
+
+Press `/` to enter search mode:
+
+1. Enter search text (case-insensitive)
+2. Matching accounts appear in the filtered list
+3. Press `/` again to modify the search
+4. Enter blank text to clear the search filter
+
+## Account Details
+
+When viewing a specific account, these shortcuts are available:
+
+| Key | Action | Description |
+| --- | --- | --- |
+| `S` | Set current account | Make this account the active account for Codex |
+| `R` | Refresh/re-login | Re-authenticate this account (requires confirmation) |
+| `E` | Enable/disable | Toggle account enabled state |
+| `D` | Delete account | Remove account from storage (requires confirmation) |
+| `Q` | Back | Return to main dashboard |
+
+### Account Detail View
+
+The account detail screen shows:
+
+- Account email and status badges
+- Added date and last used timestamp
+- Current enabled/disabled state
+- Available actions with hotkey hints
+
+## Settings Screens
+
+Settings screens support the following keyboard shortcuts:
+
+| Key | Action | Description |
+| --- | --- | --- |
+| `Enter` | Toggle/select/open | Activate the highlighted setting or option |
+| `1-9` | Quick toggle | Toggle numbered options directly |
+| `S` | Save | Save changes and return to previous screen |
+| `R` | Reset | Reset current settings panel to defaults |
+| `Q` | Back/cancel | Exit without saving draft changes |
+| `[` / `]` | Reorder fields | Move focused field up or down in summary settings |
+| `+` / `-` | Adjust value | Increment or decrement numeric backend settings |
+
+### Settings Navigation
+
+The settings hub includes multiple configuration panels:
+
+- **Account List Display**: Configure badges, layout, sorting
+- **Summary Fields**: Choose and order statusline fields
+- **Behavior**: Set auto-return delay, fetch settings
+- **Theme**: Select color palette and accent colors
+- **Backend**: Advanced rotation, quota, and timeout settings
+
+### Theme Live Preview
+
+When changing theme settings:
+
+- Preview updates immediately as you navigate
+- Press `Q` to cancel and restore the original theme
+- Press `S` to save and apply the new theme
+
+## Navigation Patterns
+
+### Breadcrumb Navigation
+
+```
+Main Dashboard → Account Details → Q (back to Main)
+Main Dashboard → Settings → Account List → Q (back to Settings) → Q (back to Main)
+```
+
+### Confirmation Prompts
+
+Destructive actions require confirmation:
+
+- Delete account (`D`): Confirms before removal
+- Refresh account (`R`): Confirms before re-authentication
+- Delete all accounts: Confirms before bulk deletion
+
+Press `Y` or `Enter` to confirm, or `N` or `Q` to cancel.
+
+## Visual Indicators
+
+### Focus Styles
+
+Two focus styles are available (configurable in settings):
+
+- **Row Invert**: Full row highlight (default)
+- **Chip**: Small badge highlight for compact displays
+
+### Status Badges
+
+Color-coded badges indicate account state:
+
+- **Green**: `[active]`, `[ok]` - Account is healthy
+- **Yellow**: `[rate-limited]`, `[cooldown]` - Temporary restrictions
+- **Red**: `[flagged]`, `[disabled]`, `[error]` - Requires attention
+- **Cyan**: `[current]` - Active account in Codex
+
+### Quota Bars
+
+Visual quota indicators show remaining capacity:
+
+```
+5h ██████▒▒▒▒ 62%  |  7d █████▒▒▒▒▒ 49%
+```
+
+- **Green**: 36-100% remaining
+- **Yellow**: 16-35% remaining
+- **Red**: 0-15% remaining
+
+## Tips
+
+- Use `?` to toggle between compact and detailed help
+- Number keys provide the fastest way to switch accounts
+- Press `Q` at any time to safely exit without changes
+- Theme changes preview live but aren't saved until you press `S`
+- Search is fuzzy and matches email, label, account ID, and number

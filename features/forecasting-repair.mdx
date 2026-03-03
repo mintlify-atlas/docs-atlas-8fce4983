@@ -1,0 +1,338 @@
+---
+title: "Forecasting & Repair"
+description: "Intelligent account readiness forecasting, automatic repair workflows, and diagnostic tools for Codex Multi-Auth"
+---
+
+## Overview
+
+Codex Multi-Auth includes powerful forecasting and repair tools that help you maintain healthy accounts, predict availability, and automatically fix common issues. These features reduce downtime and provide actionable insights into account health.
+
+## Account Forecasting
+
+The forecast engine analyzes all accounts and recommends the best one to use based on multiple health signals.
+
+<CardGroup cols={2}>
+  <Card title="Readiness Forecast" icon="chart-line">
+    Evaluates account availability across three states: ready, delayed, or unavailable based on cooldowns, rate limits, and quota pressure.
+  </Card>
+  <Card title="Risk Scoring" icon="exclamation-triangle">
+    Assigns risk scores (0-100) considering token health, quota usage, refresh failures, and account age. Lower scores indicate healthier accounts.
+  </Card>
+  <Card title="Live Quota Probing" icon="satellite-dish">
+    Use `--live` mode to fetch real-time quota data from ChatGPT headers for stronger forecasting decisions.
+  </Card>
+  <Card title="Wait Time Calculations" icon="clock">
+    Provides precise estimates for when delayed accounts will become available based on cooldown timers and rate limit resets.
+  </Card>
+</CardGroup>
+
+### Basic Forecast
+
+```bash
+codex auth forecast
+```
+
+This command:
+- Evaluates all enabled accounts
+- Assigns availability status and risk level
+- Recommends the best account to use
+- Shows wait times for delayed accounts
+
+**Sample Output:**
+```
+Account 1 (alice@example.com)
+  Availability: ready
+  Risk: low (score: 12)
+  Reasons: primary quota 45% used, secondary quota 32% used
+
+Account 2 (bob@example.com)
+  Availability: delayed
+  Risk: medium (score: 58)
+  Wait: 4m 23s
+  Reasons: cooldown remaining 4m 23s, primary quota 89% used
+
+Recommendation: Account 1 (lowest risk ready account)
+```
+
+### Live Quota Mode
+
+```bash
+codex auth forecast --live
+```
+
+Live mode makes actual API calls to retrieve current quota information from response headers:
+
+```typescript
+// Fetches quota from headers
+X-ChatGPT-Quota-Primary-Remaining: 45
+X-ChatGPT-Quota-Primary-Limit: 100
+X-ChatGPT-Quota-Secondary-Remaining: 890
+X-ChatGPT-Quota-Secondary-Limit: 1000
+```
+
+Use this when:
+- Cached quota data may be stale
+- Making critical account selection decisions
+- Debugging quota-related issues
+
+### JSON Output
+
+```bash
+codex auth forecast --json
+```
+
+Machine-readable output for automation:
+
+```json
+{
+  "accounts": [
+    {
+      "index": 0,
+      "label": "alice@example.com",
+      "availability": "ready",
+      "riskScore": 12,
+      "riskLevel": "low",
+      "waitMs": 0,
+      "reasons": ["primary quota 45% used", "secondary quota 32% used"]
+    }
+  ],
+  "recommendation": {
+    "recommendedIndex": 0,
+    "reason": "Lowest risk ready account (low, score 12)."
+  },
+  "summary": {
+    "total": 3,
+    "ready": 2,
+    "delayed": 1,
+    "unavailable": 0,
+    "highRisk": 0
+  }
+}
+```
+
+## Risk Assessment
+
+The forecast engine calculates risk scores based on multiple factors:
+
+| Factor | Risk Impact | Notes |
+|--------|-------------|-------|
+| Hard refresh failure (401, invalid_grant) | +90 | Token revoked or expired |
+| Account disabled | +95 | Manually disabled accounts |
+| Cooldown active | +45 | Recent auth or network failure |
+| Rate limit active | +35 | Temporary quota exhaustion |
+| Quota 98%+ used | +55 | Critical quota pressure |
+| Quota 90-97% used | +35 | High quota usage |
+| Quota 80-89% used | +20 | Moderate quota usage |
+| Quota 70-79% used | +10 | Elevated quota usage |
+| Refresh warning | +25 | Soft refresh errors |
+| Account unused >7 days | +10 | Stale account penalty |
+| Current account bonus | -5 | Prefer keeping current account |
+
+**Risk Levels:**
+- **Low (0-39):** Safe to use immediately
+- **Medium (40-74):** Usable with caution
+- **High (75-100):** Avoid unless no alternatives
+
+## Auto-Fix Workflow
+
+The `fix` command detects and repairs common storage and account issues automatically.
+
+```bash
+codex auth fix
+```
+
+### What It Fixes
+
+<CardGroup cols={2}>
+  <Card title="Storage Corruption" icon="database">
+    Recovers from WAL journal, backup files, or repairs invalid JSON structures.
+  </Card>
+  <Card title="Duplicate Accounts" icon="copy">
+    Removes duplicate entries based on accountId, refreshToken, or email (case-insensitive).
+  </Card>
+  <Card title="Invalid Active Index" icon="list-ol">
+    Clamps activeIndex to valid range after deletions or deduplication.
+  </Card>
+  <Card title="Stale Tokens" icon="key">
+    Proactively refreshes tokens approaching expiry (default: 5-minute buffer).
+  </Card>
+</CardGroup>
+
+### Fix Options
+
+```bash
+# Preview changes without applying
+codex auth fix --dry-run
+
+# Fix specific account by index
+codex auth fix --account 2
+
+# Force live token refresh during fix
+codex auth fix --live
+
+# Output structured JSON report
+codex auth fix --json
+
+# Fix with specific model context
+codex auth fix --model gpt-4.5-turbo
+```
+
+### Dry Run Example
+
+```bash
+codex auth fix --dry-run
+```
+
+**Output:**
+```
+Dry Run Mode - No changes will be saved
+
+Issues Found:
+  - 2 duplicate accounts (same email)
+  - Account 3 token expires in 3m (below 5m threshold)
+  - activeIndex 4 exceeds account count (3 accounts)
+
+Proposed Fixes:
+  ✓ Remove duplicate: bob@example.com (keeping newest)
+  ✓ Refresh token for Account 3
+  ✓ Clamp activeIndex: 4 → 2
+
+Run without --dry-run to apply fixes
+```
+
+## Diagnostic Doctor
+
+The `doctor` command performs comprehensive health checks and suggests remediation.
+
+```bash
+codex auth doctor
+```
+
+### Health Checks
+
+<Card title="Diagnostic Areas" icon="stethoscope">
+  - **Storage Integrity:** File permissions, corruption, backup availability
+  - **Token Health:** Expiry times, refresh token validity, JWT structure
+  - **Account State:** Cooldowns, rate limits, quota usage, disabled status
+  - **Configuration:** Project root detection, worktree setup, storage paths
+  - **Network:** OAuth server reachability, API connectivity
+  - **CLI State:** Codex CLI sync status, state file integrity
+</Card>
+
+### Doctor Output
+
+```
+Running diagnostics...
+
+✓ Storage: ~/.codex/multi-auth/openai-codex-accounts.json
+  - Format: v3 (latest)
+  - Accounts: 3
+  - Backup: available (.bak)
+  - WAL journal: clean
+
+⚠ Account 1 (alice@example.com)
+  - Status: ready
+  - Token expires: in 15 minutes
+  - Recommendation: Proactive refresh suggested
+
+✗ Account 2 (bob@example.com)
+  - Status: disabled
+  - Last error: invalid_grant
+  - Recommendation: Re-authenticate with `codex auth login`
+
+✓ Account 3 (charlie@example.com)
+  - Status: ready
+  - Quota: 5h window 42% remaining
+
+Summary:
+  3 accounts total
+  2 healthy
+  1 needs attention
+
+Suggested Actions:
+  1. Run `codex auth fix` to refresh expiring tokens
+  2. Run `codex auth login` to re-authenticate account 2
+```
+
+## Report Command
+
+Generate structured reports for support or automation:
+
+```bash
+codex auth report
+```
+
+**JSON Output:**
+```json
+{
+  "version": "0.1.1",
+  "timestamp": 1709481234567,
+  "storage": {
+    "path": "~/.codex/multi-auth/openai-codex-accounts.json",
+    "version": 3,
+    "accountCount": 3,
+    "activeIndex": 1,
+    "backupExists": true
+  },
+  "accounts": [
+    {
+      "index": 0,
+      "email": "al***@***.com",
+      "status": "ready",
+      "enabled": true,
+      "tokenExpiresIn": 900000,
+      "lastUsed": 1709480234567,
+      "riskScore": 12
+    }
+  ],
+  "health": {
+    "healthy": 2,
+    "warned": 1,
+    "failed": 0
+  }
+}
+```
+
+Emails and tokens are automatically redacted in reports.
+
+## Integration Examples
+
+### CI/CD Health Check
+
+```bash
+#!/bin/bash
+# Fail build if no healthy accounts available
+
+RESULT=$(codex auth forecast --json)
+READY=$(echo $RESULT | jq '.summary.ready')
+
+if [ "$READY" -eq 0 ]; then
+  echo "No ready accounts available"
+  codex auth doctor
+  exit 1
+fi
+```
+
+### Automated Repair
+
+```bash
+#!/bin/bash
+# Run fix before important operations
+
+codex auth fix --json > /tmp/fix-report.json
+ERRORS=$(jq '.errors | length' /tmp/fix-report.json)
+
+if [ "$ERRORS" -gt 0 ]; then
+  echo "Fix encountered errors:"
+  jq '.errors' /tmp/fix-report.json
+  exit 1
+fi
+```
+
+## Related Commands
+
+- [`codex auth check`](/cli/auth-check) - Quick account health check
+- [`codex auth forecast`](/cli/auth-forecast) - Detailed forecast with live quota
+- [`codex auth fix`](/cli/auth-fix) - Automatic repair workflow
+- [`codex auth doctor`](/cli/auth-doctor) - Comprehensive diagnostics
+- [`codex auth report`](/cli/auth-report) - Generate JSON health report

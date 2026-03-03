@@ -1,80 +1,315 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Go from installation to your first working multi-account setup in 60 seconds
 ---
 
-## Get started in three steps
+This guide walks you through adding your first account, verifying the setup, and running essential health checks.
 
-Get your documentation site running locally and make your first customization.
+## Add your first account
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Open the account dashboard">
+    Launch the interactive account management dashboard:
+
+    ```bash
+    codex auth login
+    ```
+
+    The dashboard will open in your terminal with a list of saved accounts (empty on first run).
+  </Step>
+
+  <Step title="Add a new account">
+    In the dashboard:
+
+    1. Select **Add New Account** using arrow keys and press `Enter`
+    2. Your browser will open to the ChatGPT OAuth consent page
+    3. Approve the authorization request
+    4. Return to your terminal
+
+    <Note>
+      The OAuth callback runs on `http://127.0.0.1:1455/auth/callback`. Ensure port 1455 is available.
+    </Note>
+  </Step>
+
+  <Step title="Verify account storage">
+    List your saved accounts to confirm the new account was added:
+
+    ```bash
+    codex auth list
+    ```
+
+    You should see output showing your newly added account marked as active:
+
+    ```
+    Saved Accounts:
+    → [1] user@example.com (active)
+    ```
+  </Step>
+
+  <Step title="Run a health check">
+    Verify the account is healthy and ready to use:
+
+    ```bash
+    codex auth check
+    ```
+
+    This performs a quick health assessment of all configured accounts.
+  </Step>
+</Steps>
+
+## Add additional accounts
+
+For multi-account rotation and failover, add more accounts:
+
+<Steps>
+  <Step title="Repeat the login flow">
+    Open the dashboard again and add another account:
+
+    ```bash
+    codex auth login
+    ```
+
+    Select **Add New Account** and complete OAuth for a different ChatGPT account.
+  </Step>
+
+  <Step title="Forecast account health">
+    Run a live forecast to see which account will be selected for the next request:
+
+    ```bash
+    codex auth forecast --live
+    ```
+
+    The `--live` flag performs real-time health probes against the ChatGPT backend.
+  </Step>
+</Steps>
+
+## Essential commands
+
+Now that you have accounts configured, try these day-1 commands:
+
+<CodeGroup>
+  ```bash List accounts
+  codex auth list
+  ```
+
+  ```bash Switch active account
+  codex auth switch 2
+  ```
+
+  ```bash Check account health
+  codex auth check
+  ```
+
+  ```bash Forecast best account
+  codex auth forecast --live
+  ```
+
+  ```bash Preview repairs
+  codex auth fix --dry-run
+  ```
+
+  ```bash Run repairs with live probe
+  codex auth fix --live --model gpt-5-codex
+  ```
+
+  ```bash Diagnose and fix issues
+  codex auth doctor --fix
+  ```
+
+  ```bash Generate health report
+  codex auth report --live --json
+  ```
+</CodeGroup>
+
+## Dashboard hotkeys
+
+When you're in the interactive dashboard (`codex auth login`), use these keyboard shortcuts:
+
+### Main dashboard
+
+| Key | Action |
+| --- | --- |
+| `Up` / `Down` | Move selection |
+| `Enter` | Select/open |
+| `1-9` | Quick switch to account by number |
+| `/` | Search accounts |
+| `?` | Toggle help |
+| `Q` | Back/cancel |
+
+### Account details
+
+| Key | Action |
+| --- | --- |
+| `S` | Set as current account |
+| `R` | Refresh/re-login account |
+| `E` | Enable/disable account |
+| `D` | Delete account |
+
+## Verify your setup
+
+Run this full verification sequence to ensure everything is working:
+
+```bash
+# Check plugin status
+codex auth status
+
+# List all accounts
+codex auth list
+
+# Health check all accounts
+codex auth check
+
+# Verify flagged accounts (if any)
+codex auth verify-flagged --json
+
+# Live forecast for next request
+codex auth forecast --live
+
+# Preview any recommended fixes
+codex auth fix --dry-run
+
+# Generate full health report
+codex auth report --live --json
+
+# Run diagnostics
+codex auth doctor --json
+```
+
+<Note>
+  The `--json` flag outputs machine-readable JSON instead of human-friendly terminal output. Useful for automation and logging.
+</Note>
+
+## Common first-run issues
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title="Command not recognized">
+    If `codex auth` is not recognized:
+
+    ```bash
+    # Check where the codex binary is installed
+    where codex  # Windows
+    which codex  # Unix/macOS
+
+    # Try compatibility aliases
+    codex multi auth status
+    codex multi-auth status
+    codex multiauth status
+    ```
+
+    If none work, verify your global npm installation path is in your `PATH` environment variable.
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+
+  <Accordion title="OAuth callback fails on port 1455">
+    The OAuth server binds to `127.0.0.1:1455`. If you see port binding errors:
+
+    ```bash
+    # Find and stop the process using port 1455
+    # Unix/macOS:
+    lsof -ti:1455 | xargs kill
+
+    # Windows:
+    netstat -ano | findstr :1455
+    # Then kill the PID shown
+    ```
+
+    After freeing the port, retry `codex auth login`.
+  </Accordion>
+
+  <Accordion title="Switch succeeds but wrong account is active">
+    If `codex auth switch <index>` completes but the wrong account appears active:
+
+    1. Run the switch command again:
+       ```bash
+       codex auth switch 1
+       ```
+
+    2. Restart your terminal session
+
+    3. Verify with:
+       ```bash
+       codex auth list
+       ```
+  </Accordion>
+
+  <Accordion title="Token errors (missing id_token, token_expired, refresh_token_reused)">
+    If you see OAuth token errors:
+
+    ```bash
+    # Re-login the affected account
+    codex auth login
+    # Select the account and choose "Refresh/re-login"
+    ```
+
+    Or delete and re-add the account:
+
+    ```bash
+    codex auth login
+    # Select the account and choose "Delete account"
+    # Then add it again with "Add New Account"
+    ```
+  </Accordion>
+
+  <Accordion title="Stale or incorrect account data">
+    If account data appears stale:
+
+    ```bash
+    # Run automatic diagnostics and fixes
+    codex auth doctor --fix
+
+    # Then verify
+    codex auth check
+    codex auth forecast --live
+    ```
   </Accordion>
 </AccordionGroup>
 
-### Step 2: Deploy your changes
+## 60-second recovery
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+If anything goes wrong, run this recovery sequence:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```bash
+codex auth doctor --fix
+codex auth check
+codex auth forecast --live
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+If issues persist:
 
-### Step 3: Go live
+```bash
+codex auth login
+# Delete and re-add problematic accounts
+```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+## Storage locations
+
+Codex Multi-Auth stores configuration and account data in these locations:
+
+| File | Default path |
+| --- | --- |
+| Settings | `~/.codex/multi-auth/settings.json` |
+| Accounts (global) | `~/.codex/multi-auth/openai-codex-accounts.json` |
+| Accounts (per-project) | `~/.codex/multi-auth/projects/<project-key>/openai-codex-accounts.json` |
+| Flagged accounts | `~/.codex/multi-auth/openai-codex-flagged-accounts.json` |
+| Quota cache | `~/.codex/multi-auth/quota-cache.json` |
+| Logs | `~/.codex/multi-auth/logs/codex-plugin/` |
+
+<Note>
+  You can override the root directory with the `CODEX_MULTI_AUTH_DIR` environment variable.
+</Note>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Features" icon="stars" href="/features">
+    Explore advanced features like project-scoped accounts and session affinity
+  </Card>
+  <Card title="Configuration" icon="gear" href="/guides/configuration">
+    Customize settings and environment variables
+  </Card>
+  <Card title="Commands reference" icon="terminal" href="/cli/overview">
+    Complete reference for all `codex auth` commands
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/guides/troubleshooting">
+    Detailed troubleshooting guide for common issues
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

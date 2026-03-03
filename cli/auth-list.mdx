@@ -1,0 +1,192 @@
+---
+title: codex auth list
+description: List all saved accounts and show the active account
+---
+
+Display a quick summary of all saved accounts with their status and last-used timestamps.
+
+## Usage
+
+```bash
+codex auth list
+```
+
+No options or arguments required.
+
+## Output Format
+
+The command prints:
+
+1. Account count and storage path
+2. Numbered list of accounts with labels
+3. Status markers (current, disabled, rate-limited, cooldown)
+4. Last-used timestamp for each account
+
+## Example Output
+
+```
+Accounts (3)
+Storage: /home/user/.codex/multi-auth/openai-codex-accounts.json
+
+1. alice@example.com [current] used 2 hours ago
+2. bob@work.com [disabled] used 3 days ago
+3. carol@personal.com [rate-limited] used 5 minutes ago
+```
+
+### Status Markers
+
+| Marker | Meaning |
+| --- | --- |
+| `[current]` | This account is currently active |
+| `[disabled]` | Account is disabled (won't be used for rotation) |
+| `[rate-limited]` | Account hit rate limits, cooling down |
+| `[cooldown:2h15m]` | Account in cooldown period, shows remaining time |
+
+## Account Labels
+
+Accounts are labeled using the first available identifier:
+
+1. **Custom label** - If set via dashboard
+2. **Email** - Extracted from ID token
+3. **Account ID** - From JWT `sub` claim
+4. **Refresh token prefix** - Last resort fallback
+
+Example labels:
+
+```
+1. Work Account (alice@company.com)     # Custom label + email
+2. bob@personal.com                      # Email only
+3. user-abc123def456                     # Account ID
+4. token-78901...                        # Refresh token prefix
+```
+
+## Last-Used Timestamps
+
+Shows relative time since last API request:
+
+- `never used` - Account added but never used
+- `used 5 minutes ago` - Recent usage
+- `used 3 days ago` - Older usage
+
+Timestamps are updated on:
+
+- Successful API requests
+- Token refresh operations
+- Manual account switches
+
+## Empty State
+
+If no accounts are configured:
+
+```
+No accounts configured.
+Storage: /home/user/.codex/multi-auth/openai-codex-accounts.json
+```
+
+Run [`codex auth login`](/cli/auth-login) to add your first account.
+
+## Storage Path
+
+The storage path shown depends on your configuration:
+
+### Global Storage (Default)
+
+```
+Storage: ~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+### Project-Scoped Storage
+
+If running inside a Git repository:
+
+```
+Storage: ~/.codex/multi-auth/projects/abc123def456/openai-codex-accounts.json
+```
+
+The project key is derived from the repository root path.
+
+### Custom Root
+
+If `CODEX_MULTI_AUTH_DIR` is set:
+
+```
+Storage: /custom/path/openai-codex-accounts.json
+```
+
+## Exit Codes
+
+- `0` - Success (accounts found or not found)
+- `1` - Storage read error
+
+## Examples
+
+### List all accounts
+
+```bash
+codex auth list
+```
+
+### Check if any accounts exist
+
+```bash
+if codex auth list | grep -q "No accounts"; then
+  echo "No accounts configured"
+  codex auth login
+fi
+```
+
+### Count active accounts
+
+```bash
+codex auth list | grep -c "^"
+# Subtract 3 for header lines
+```
+
+## Machine-Readable Output
+
+For scripting, use [`codex auth report --json`](/cli/auth-report) instead:
+
+```bash
+codex auth report --json | jq '.accounts | length'
+```
+
+## Related Commands
+
+- [`codex auth login`](/cli/auth-login) - Add or manage accounts
+- [`codex auth status`](/cli/auth-status) - Detailed status summary
+- [`codex auth switch`](/cli/auth-switch) - Change active account
+- [`codex auth check`](/cli/auth-check) - Health check accounts
+- [`codex auth report --json`](/cli/auth-report) - Machine-readable output
+
+## Troubleshooting
+
+### Wrong Account Shows as Current
+
+If the active account marker `[current]` is incorrect:
+
+```bash
+codex auth switch 1  # Switch to first account
+codex auth list      # Verify marker moved
+```
+
+### Duplicate Accounts
+
+If you see duplicate entries for the same account, they'll be merged on next login:
+
+```bash
+codex auth login     # Re-login merges duplicates
+codex auth list      # Verify single entry
+```
+
+### Storage Path Not Found
+
+```
+No accounts configured.
+Storage: /path/does/not/exist/openai-codex-accounts.json
+```
+
+The storage file is created automatically on first login:
+
+```bash
+codex auth login
+```

@@ -1,0 +1,266 @@
+---
+title: Account Management
+description: Manage multiple Codex accounts, switch between them, and monitor account health
+---
+
+Codex Multi-Auth enables you to manage multiple ChatGPT Codex accounts, seamlessly switch between them, and track their availability and quota status.
+
+## Adding Accounts
+
+Add new accounts through the OAuth browser flow:
+
+<Steps>
+  <Step title="Start the login process">
+    Run the login command to open the OAuth flow:
+    ```bash
+    codex auth login
+    ```
+  </Step>
+
+  <Step title="Complete browser authentication">
+    Your default browser will open to `http://127.0.0.1:1455/auth/callback` to authenticate with ChatGPT. Complete the OAuth flow in the browser window.
+  </Step>
+
+  <Step title="Return to terminal">
+    After successful authentication, return to your terminal. The account will be added to your pool and automatically selected.
+  </Step>
+</Steps>
+
+<Info>
+The OAuth callback server runs on port `1455` at `127.0.0.1`. If this port is already in use, stop the conflicting process before attempting login.
+</Info>
+
+## Viewing Accounts
+
+List all accounts in your pool with their current status:
+
+```bash
+codex auth list
+```
+
+This displays:
+- Account index (for switching)
+- Email address (case-insensitive deduplication)
+- Health score (0-100)
+- Active status
+- Last used timestamp
+
+For detailed account metadata:
+
+```bash
+codex auth status
+```
+
+## Switching Accounts
+
+Switch to a different account by index:
+
+<Steps>
+  <Step title="Identify the target account">
+    Run `codex auth list` to see available accounts and their indices.
+  </Step>
+
+  <Step title="Switch to the account">
+    ```bash
+    codex auth switch <index>
+    ```
+    Replace `<index>` with the account number from the list.
+  </Step>
+
+  <Step title="Verify the switch">
+    ```bash
+    codex auth status
+    ```
+    The active account should now reflect your selection.
+  </Step>
+</Steps>
+
+<Warning>
+If the switch succeeds but the wrong account is used, stale Codex CLI state may be cached. Re-run the switch command or restart your terminal session.
+</Warning>
+
+## Account Health Checks
+
+Verify account health and token validity:
+
+### Quick Health Check
+
+```bash
+codex auth check
+```
+
+This validates:
+- Token expiration status (with 60-second refresh skew window)
+- Refresh token validity
+- Account reachability
+
+### Live Forecast
+
+Check real-time quota availability for a specific model:
+
+```bash
+codex auth forecast --live --model gpt-5-codex
+```
+
+This queries the ChatGPT backend to determine:
+- 5-hour quota window status
+- 7-day quota window status
+- Recommended account selection
+
+### Comprehensive Diagnostics
+
+```bash
+codex auth doctor --json
+```
+
+Outputs:
+- Health scores for all accounts
+- Flagged accounts (expired/invalid tokens)
+- Configuration conflicts
+- Storage path validation
+
+## Account Health Scoring
+
+Accounts are scored from 0-100 based on:
+
+| Event | Health Impact |
+| --- | --- |
+| Successful request | Health restored to 100 |
+| Network error (5xx) | Health decremented, cooldown applied (6s default) |
+| Rate limit hit | Health decremented, cooldown applied |
+| Token refresh failure | Account marked unhealthy |
+| Token expiration | Account flagged, requires re-login |
+
+The selection algorithm prioritizes accounts with:
+1. Higher health scores
+2. Available quota (5-hour and 7-day windows)
+3. No active cooldown periods
+
+## Session Affinity
+
+By default, session affinity keeps you on the same account for a conversation:
+
+- **TTL**: 20 minutes (configurable via `sessionAffinityTtlMs`)
+- **Max entries**: 512 conversations tracked
+- **Behavior**: Reuses the same account for a session ID unless health degrades
+
+Disable session affinity if you prefer strict round-robin or health-based rotation:
+
+```bash
+export CODEX_AUTH_SESSION_AFFINITY=0
+```
+
+## Proactive Token Refresh
+
+The **Proactive Refresh Guardian** automatically refreshes tokens before expiration:
+
+- **Check interval**: 60 seconds (default)
+- **Buffer window**: 5 minutes before expiration
+- **Background operation**: Runs independently of active requests
+
+This prevents mid-conversation token expiration. It respects refresh lease locks to avoid race conditions with concurrent token updates.
+
+## Fixing Unhealthy Accounts
+
+When accounts become unhealthy due to expired tokens or connectivity issues:
+
+<Steps>
+  <Step title="Run the doctor command">
+    ```bash
+    codex auth doctor --fix
+    ```
+    This attempts to refresh all unhealthy accounts automatically.
+  </Step>
+
+  <Step title="Verify repairs">
+    ```bash
+    codex auth check
+    ```
+    Confirm that flagged accounts have been restored.
+  </Step>
+
+  <Step title="Re-login if needed">
+    If automatic repair fails, re-authenticate the affected account:
+    ```bash
+    codex auth login
+    ```
+  </Step>
+</Steps>
+
+### Common Token Errors
+
+| Error | Cause | Solution |
+| --- | --- | --- |
+| `missing field id_token` | Stale auth payload | Re-login the account |
+| `refresh_token_reused` | Token pair rotated elsewhere | Re-login the account |
+| `token_expired` | Refresh token no longer valid | Re-login the account |
+| `All accounts unhealthy` | Entire pool stale | Run `codex auth doctor --fix`, then add a fresh account |
+
+## Per-Project Accounts
+
+By default (`perProjectAccounts: true`), accounts are stored per-project:
+
+- **Global accounts**: `~/.codex/multi-auth/openai-codex-accounts.json`
+- **Project accounts**: `~/.codex/multi-auth/projects/<project-key>/openai-codex-accounts.json`
+
+### Worktree Support
+
+Linked Git worktrees **share accounts** via `resolveProjectStorageIdentityRoot`:
+
+1. Plugin detects `.git` file in worktree
+2. Reads `gitdir` pointer to resolve the main repository
+3. Uses the main repository's project key for account storage
+4. Legacy worktree-keyed accounts are auto-migrated on first load
+
+<Info>
+Legacy worktree-specific account files are retained on migration only if the canonical write fails (to prevent data loss).
+</Info>
+
+## Removing Accounts
+
+To remove an account from the pool:
+
+<Steps>
+  <Step title="Identify the account index">
+    ```bash
+    codex auth list
+    ```
+  </Step>
+
+  <Step title="Remove the account">
+    ```bash
+    codex auth remove <index>
+    ```
+  </Step>
+
+  <Step title="Confirm removal">
+    ```bash
+    codex auth list
+    ```
+    Verify the account no longer appears.
+  </Step>
+</Steps>
+
+## Email Deduplication
+
+Account email addresses are deduplicated using `normalizeEmailKey()` (trim + lowercase):
+
+- `User@Example.Com` and `user@example.com` are treated as the same account
+- Re-login with the same email updates the existing account instead of creating a duplicate
+
+## Monitoring and Reporting
+
+Generate comprehensive account reports:
+
+```bash
+codex auth report --live --json
+```
+
+Outputs:
+- Account pool snapshot
+- Live quota status for all accounts
+- Health scores and cooldown timers
+- Flagged accounts requiring attention
+- Configuration effective values
+
+Include this output when filing issue reports for faster troubleshooting.

@@ -1,0 +1,537 @@
+---
+title: Automation & CI/CD
+description: Automate account management and diagnostics with machine-readable JSON outputs
+---
+
+# Automation & CI/CD
+
+Codex Multi-Auth provides `--json` flags for machine-readable output, enabling automation, monitoring, and CI/CD integration.
+
+## JSON Output Commands
+
+Most `codex-multi-auth auth` commands support `--json` for structured output.
+
+### Account Status
+
+```bash
+codex-multi-auth auth list --json
+```
+
+**Output**:
+```json
+{
+  "accounts": [
+    {
+      "index": 0,
+      "accountId": "org-abc123",
+      "email": "user@example.com",
+      "enabled": true,
+      "isActive": true,
+      "addedAt": 1709500000000,
+      "lastUsed": 1709510000000,
+      "status": "active",
+      "quota": {
+        "primary": { "usedPercent": 15, "windowMinutes": 300, "resetAtMs": 1709520000000 },
+        "secondary": { "usedPercent": 8, "windowMinutes": 10080, "resetAtMs": 1709600000000 }
+      }
+    },
+    {
+      "index": 1,
+      "accountId": "user-xyz789",
+      "email": "alt@example.com",
+      "enabled": true,
+      "isActive": false,
+      "addedAt": 1709400000000,
+      "lastUsed": 1709450000000,
+      "status": "rate-limited",
+      "rateLimitResetTimes": {
+        "codex": 1709515000000
+      }
+    }
+  ],
+  "activeIndex": 0,
+  "storagePath": "/home/user/.codex/multi-auth/openai-codex-accounts.json"
+}
+```
+
+### Health Check
+
+```bash
+codex-multi-auth auth check --json
+```
+
+**Output**:
+```json
+{
+  "summary": {
+    "total": 2,
+    "working": 1,
+    "failed": 1,
+    "warnings": 0
+  },
+  "accounts": [
+    {
+      "index": 0,
+      "accountId": "org-abc123",
+      "email": "user@example.com",
+      "status": "working",
+      "detail": "working now"
+    },
+    {
+      "index": 1,
+      "accountId": "user-xyz789",
+      "email": "alt@example.com",
+      "status": "failed",
+      "detail": "invalid grant (refresh token expired)"
+    }
+  ]
+}
+```
+
+### Forecast (Capacity Planning)
+
+```bash
+codex-multi-auth auth forecast --json --live --model gpt-5-codex
+```
+
+**Output**:
+```json
+{
+  "recommendation": {
+    "index": 0,
+    "accountId": "org-abc123",
+    "email": "user@example.com",
+    "availability": "ready",
+    "riskLevel": "low",
+    "score": 95,
+    "reason": "High quota remaining (5h: 85%, 7d: 92%) with low usage"
+  },
+  "accounts": [
+    {
+      "index": 0,
+      "accountId": "org-abc123",
+      "availability": "ready",
+      "riskLevel": "low",
+      "score": 95,
+      "quota": {
+        "primary": { "leftPercent": 85, "resetAtMs": 1709520000000 },
+        "secondary": { "leftPercent": 92, "resetAtMs": 1709600000000 }
+      }
+    },
+    {
+      "index": 1,
+      "accountId": "user-xyz789",
+      "availability": "delayed",
+      "riskLevel": "medium",
+      "score": 40,
+      "rateLimitResetAtMs": 1709515000000
+    }
+  ],
+  "model": "gpt-5-codex"
+}
+```
+
+### Doctor Diagnostics
+
+```bash
+codex-multi-auth auth doctor --json
+```
+
+**Output**:
+```json
+{
+  "checks": [
+    {
+      "name": "Storage readable",
+      "status": "pass",
+      "detail": "Loaded 2 accounts from storage"
+    },
+    {
+      "name": "Active account valid",
+      "status": "pass",
+      "detail": "Active account (index 0) has valid tokens"
+    },
+    {
+      "name": "Codex CLI sync enabled",
+      "status": "pass",
+      "detail": "CODEX_MULTI_AUTH_SYNC_CODEX_CLI=1"
+    },
+    {
+      "name": "Codex CLI files present",
+      "status": "warn",
+      "detail": "~/.codex/accounts.json not found"
+    }
+  ],
+  "summary": {
+    "passed": 3,
+    "warnings": 1,
+    "failed": 0
+  }
+}
+```
+
+### Flagged Account Verification
+
+```bash
+codex-multi-auth auth verify-flagged --json --dry-run
+```
+
+**Output**:
+```json
+{
+  "flagged": [
+    {
+      "accountId": "org-old123",
+      "email": "old@example.com",
+      "flaggedAt": 1709400000000,
+      "reason": "hard_refresh_failure",
+      "verificationStatus": "recoverable",
+      "detail": "Token refresh succeeded"
+    }
+  ],
+  "summary": {
+    "total": 1,
+    "recoverable": 1,
+    "stillFailed": 0
+  },
+  "dryRun": true
+}
+```
+
+## CI/CD Integration
+
+### GitHub Actions
+
+Monitor account health in CI:
+
+```yaml
+name: Codex Account Health
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      
+      - name: Install Codex Multi-Auth
+        run: npm install -g codex-multi-auth
+      
+      - name: Restore account storage
+        run: |
+          mkdir -p ~/.codex/multi-auth
+          echo '${{ secrets.CODEX_ACCOUNTS }}' > ~/.codex/multi-auth/openai-codex-accounts.json
+      
+      - name: Run health check
+        id: health
+        run: |
+          codex-multi-auth auth check --json > health.json
+          cat health.json
+      
+      - name: Parse results
+        run: |
+          FAILED=$(jq '.summary.failed' health.json)
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED account(s) need re-login"
+            exit 1
+          fi
+      
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: health-check-results
+          path: health.json
+```
+
+### GitLab CI
+
+Pre-flight quota check before expensive jobs:
+
+```yaml
+stages:
+  - preflight
+  - codegen
+
+codex-quota-check:
+  stage: preflight
+  script:
+    - npm install -g codex-multi-auth
+    - mkdir -p ~/.codex/multi-auth
+    - echo "$CODEX_ACCOUNTS" > ~/.codex/multi-auth/openai-codex-accounts.json
+    - codex-multi-auth auth forecast --json --live --model gpt-5-codex > forecast.json
+    - |
+      AVAILABILITY=$(jq -r '.recommendation.availability' forecast.json)
+      if [ "$AVAILABILITY" = "unavailable" ]; then
+        echo "No accounts available for Codex generation"
+        exit 1
+      fi
+    - cat forecast.json
+  artifacts:
+    reports:
+      dotenv: forecast.json
+
+codegen-job:
+  stage: codegen
+  dependencies:
+    - codex-quota-check
+  script:
+    - codex generate --model gpt-5-codex src/
+```
+
+## Monitoring
+
+### Prometheus Exporter
+
+Create a custom exporter for account metrics:
+
+```typescript
+import express from 'express';
+import { execSync } from 'child_process';
+
+const app = express();
+
+app.get('/metrics', async (req, res) => {
+  const health = JSON.parse(
+    execSync('codex-multi-auth auth check --json').toString()
+  );
+  const forecast = JSON.parse(
+    execSync('codex-multi-auth auth forecast --json --live').toString()
+  );
+
+  const metrics = [
+    `# HELP codex_accounts_total Total number of accounts`,
+    `# TYPE codex_accounts_total gauge`,
+    `codex_accounts_total ${health.summary.total}`,
+    ``,
+    `# HELP codex_accounts_working Number of working accounts`,
+    `# TYPE codex_accounts_working gauge`,
+    `codex_accounts_working ${health.summary.working}`,
+    ``,
+    `# HELP codex_accounts_failed Number of failed accounts`,
+    `# TYPE codex_accounts_failed gauge`,
+    `codex_accounts_failed ${health.summary.failed}`,
+    ``,
+    `# HELP codex_quota_primary_left Quota remaining in primary window (%)`,
+    `# TYPE codex_quota_primary_left gauge`,
+  ];
+
+  for (const account of forecast.accounts) {
+    const labels = `accountId="${account.accountId}",email="${account.email}"`;
+    const primaryLeft = account.quota?.primary?.leftPercent ?? 0;
+    const secondaryLeft = account.quota?.secondary?.leftPercent ?? 0;
+    metrics.push(`codex_quota_primary_left{${labels}} ${primaryLeft}`);
+    metrics.push(`codex_quota_secondary_left{${labels}} ${secondaryLeft}`);
+  }
+
+  res.type('text/plain').send(metrics.join('\n'));
+});
+
+app.listen(9090, () => console.log('Exporter running on :9090'));
+```
+
+**Grafana Query**:
+```promql
+sum(codex_quota_primary_left) by (accountId)
+```
+
+### Datadog Integration
+
+Send health metrics to Datadog:
+
+```bash
+#!/bin/bash
+HEALTH=$(codex-multi-auth auth check --json)
+WORKING=$(echo "$HEALTH" | jq '.summary.working')
+FAILED=$(echo "$HEALTH" | jq '.summary.failed')
+
+curl -X POST "https://api.datadoghq.com/api/v1/series" \
+  -H "Content-Type: application/json" \
+  -H "DD-API-KEY: $DD_API_KEY" \
+  -d @- << EOF
+{
+  "series": [
+    {
+      "metric": "codex.accounts.working",
+      "points": [[$(date +%s), $WORKING]],
+      "type": "gauge",
+      "tags": ["env:production"]
+    },
+    {
+      "metric": "codex.accounts.failed",
+      "points": [[$(date +%s), $FAILED]],
+      "type": "gauge",
+      "tags": ["env:production"]
+    }
+  ]
+}
+EOF
+```
+
+## Scripting Patterns
+
+### Rotate to Best Account
+
+```bash
+#!/bin/bash
+set -e
+
+# Get forecast recommendation
+RECOMMENDATION=$(codex-multi-auth auth forecast --json --live | jq -r '.recommendation')
+INDEX=$(echo "$RECOMMENDATION" | jq -r '.index')
+AVAILABILITY=$(echo "$RECOMMENDATION" | jq -r '.availability')
+
+if [ "$AVAILABILITY" = "unavailable" ]; then
+  echo "No accounts available"
+  exit 1
+fi
+
+# Switch to recommended account
+codex-multi-auth auth switch "$INDEX"
+echo "Switched to account $INDEX ($(echo "$RECOMMENDATION" | jq -r '.email'))"
+```
+
+### Auto-Fix Failed Accounts
+
+```bash
+#!/bin/bash
+# Run fix in non-interactive mode (skips re-login prompts)
+codex-multi-auth auth fix --json > fix-results.json
+
+RESTORED=$(jq '.summary.restored' fix-results.json)
+STILL_FAILED=$(jq '.summary.stillFailed' fix-results.json)
+
+echo "Restored: $RESTORED"
+echo "Still failed: $STILL_FAILED"
+
+if [ "$STILL_FAILED" -gt 0 ]; then
+  echo "::warning::$STILL_FAILED account(s) still need manual re-login"
+fi
+```
+
+### Export Report
+
+```bash
+#!/bin/bash
+DATE=$(date +%Y-%m-%d)
+codex-multi-auth auth report --json --live --out "reports/codex-health-$DATE.json"
+echo "Report saved to reports/codex-health-$DATE.json"
+```
+
+## Dry-Run Mode
+
+Many commands support `--dry-run` for safe testing:
+
+```bash
+# Preview what fix would do without making changes
+codex-multi-auth auth fix --dry-run --json
+
+# Preview flagged account restoration
+codex-multi-auth auth verify-flagged --dry-run --json
+
+# Preview doctor diagnostics without fixes
+codex-multi-auth auth doctor --dry-run --json
+```
+
+## Exit Codes
+
+All commands follow standard Unix exit code conventions:
+
+- `0` - Success
+- `1` - General error (e.g., no accounts, invalid arguments)
+- `2` - Validation failed (e.g., health check found failures)
+
+Use in CI pipelines:
+
+```bash
+# Fail pipeline if any accounts are broken
+codex-multi-auth auth check --json || exit 1
+
+# Continue even if some accounts failed
+codex-multi-auth auth check --json || true
+```
+
+## Environment Variables
+
+Override behavior for automation:
+
+```bash
+# Disable interactive prompts
+export CODEX_AUTH_NON_INTERACTIVE=1
+
+# Use custom storage path
+export CODEX_MULTI_AUTH_STORAGE_PATH=/var/lib/codex/accounts.json
+
+# Disable Codex CLI sync
+export CODEX_MULTI_AUTH_SYNC_CODEX_CLI=0
+
+# Enable debug logging to file
+export DEBUG="codex-multi-auth:*"
+export DEBUG_FILE=/var/log/codex-multi-auth.log
+```
+
+## Security Considerations
+
+### Storing Secrets
+
+**DO NOT** commit `openai-codex-accounts.json` to version control. Use secret management:
+
+**GitHub Actions**:
+```yaml
+- name: Restore accounts
+  run: |
+    mkdir -p ~/.codex/multi-auth
+    echo '${{ secrets.CODEX_ACCOUNTS }}' > ~/.codex/multi-auth/openai-codex-accounts.json
+    chmod 600 ~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+**GitLab CI**:
+```yaml
+script:
+  - mkdir -p ~/.codex/multi-auth
+  - echo "$CODEX_ACCOUNTS" > ~/.codex/multi-auth/openai-codex-accounts.json
+  - chmod 600 ~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+**Docker**:
+```dockerfile
+FROM node:20
+RUN npm install -g codex-multi-auth
+RUN mkdir -p /root/.codex/multi-auth
+# Mount secrets at runtime via volume or secret manager
+CMD ["codex", "generate", "src/"]
+```
+
+### Token Redaction
+
+JSON outputs automatically redact sensitive fields:
+
+```json
+{
+  "accountId": "org-abc123",
+  "email": "user@example.com",
+  "accessToken": "<redacted>",
+  "refreshToken": "<redacted>"
+}
+```
+
+Use `--include-tokens` flag to include raw tokens (use with caution):
+
+```bash
+# For local debugging only - DO NOT use in CI logs
+codex-multi-auth auth list --json --include-tokens > accounts-with-tokens.json
+```
+
+## Next Steps
+
+- [Plugin System](/advanced/plugin-system) - Extend with custom tools
+- [Codex CLI Integration](/advanced/codex-cli-integration) - Sync with @openai/codex
+- [Configuration Reference](/cli/settings-reference) - All automation settings

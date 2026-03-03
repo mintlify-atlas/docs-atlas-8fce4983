@@ -1,0 +1,324 @@
+---
+title: Upgrading
+description: Migrate from legacy installs to canonical Codex Multi-Auth and upgrade between versions
+---
+
+Migrate legacy installations to the canonical `codex-multi-auth` workflow and understand version-specific upgrade considerations.
+
+## Canonical Targets
+
+The current stable release line targets:
+
+- **Package**: `codex-multi-auth` (unscoped)
+- **Command family**: `codex auth ...`
+- **Runtime root**: `~/.codex/multi-auth`
+
+## Migration from Legacy Installs
+
+If you are upgrading from the scoped package (`@ndycode/codex-multi-auth`) or older pre-0.1.0 versions, follow this checklist:
+
+<Steps>
+  <Step title="Install official Codex CLI">
+    Ensure you have the official OpenAI Codex CLI installed:
+
+    ```bash
+    npm i -g @openai/codex
+    ```
+  </Step>
+
+  <Step title="Remove legacy scoped package">
+    If you previously installed the scoped package, uninstall it:
+
+    ```bash
+    npm uninstall -g @ndycode/codex-multi-auth
+    ```
+  </Step>
+
+  <Step title="Install canonical package">
+    Install the unscoped canonical package:
+
+    ```bash
+    npm i -g codex-multi-auth
+    ```
+  </Step>
+
+  <Step title="Verify routing and status">
+    Confirm that the correct binaries are active:
+
+    ```bash
+    codex --version
+    codex auth status
+    ```
+
+    Expected output:
+    - `codex --version` shows the official Codex CLI version
+    - `codex auth status` shows the multi-auth plugin status
+  </Step>
+
+  <Step title="Rebuild account health baseline">
+    Re-authenticate and verify account health:
+
+    ```bash
+    codex auth login
+    codex auth check
+    codex auth forecast --live --model gpt-5-codex
+    ```
+  </Step>
+</Steps>
+
+## Configuration Upgrade Notes
+
+During upgrades, runtime config source precedence is:
+
+1. **Unified settings `pluginConfig`** from `settings.json` (when valid)
+2. **Fallback file config** from `CODEX_MULTI_AUTH_CONFIG_PATH` (or legacy compatibility path) when unified settings are absent/invalid
+3. **Runtime defaults** (hardcoded in `lib/config.ts`)
+
+After source selection, **environment variables still override individual setting values**.
+
+### Migrating Legacy Config Files
+
+If you have a legacy config file at:
+
+- `~/.codex/codex-multi-auth-config.json`
+- `~/.codex/openai-codex-auth-config.json`
+
+The plugin will **automatically detect and use** these files if unified settings are absent. However, **prefer unified settings** for new setups:
+
+<Steps>
+  <Step title="Launch settings editor">
+    ```bash
+    codex auth settings
+    ```
+  </Step>
+
+  <Step title="Review and save">
+    Review the auto-loaded settings and press **S** to save to unified settings (`~/.codex/multi-auth/settings.json`).
+  </Step>
+
+  <Step title="Remove legacy files (optional)">
+    After confirming the migration, you can remove the legacy files:
+
+    ```bash
+    rm ~/.codex/codex-multi-auth-config.json
+    rm ~/.codex/openai-codex-auth-config.json
+    ```
+  </Step>
+</Steps>
+
+## Worktree Storage Migration
+
+If you used `perProjectAccounts: true` **before** worktree identity sharing was added (v0.1.1), older worktree-keyed account files are migrated automatically:
+
+- **Legacy worktree storage** is merged into the canonical repo-shared project file
+- **Legacy files are removed** only after a successful canonical write
+- **If canonical persistence fails**, legacy files are retained to avoid data loss
+
+### How It Works
+
+<Steps>
+  <Step title="Worktree detection">
+    The plugin detects `.git` file in the worktree directory and reads the `gitdir` pointer.
+  </Step>
+
+  <Step title="Identity resolution">
+    `resolveProjectStorageIdentityRoot` resolves the main repository's `commondir` to determine the shared identity root.
+  </Step>
+
+  <Step title="Account merge">
+    Legacy worktree-keyed accounts are merged into the canonical repo-shared account file (`~/.codex/multi-auth/projects/<repo-key>/openai-codex-accounts.json`).
+  </Step>
+
+  <Step title="Legacy cleanup">
+    Legacy worktree-specific files are deleted only after successful write.
+  </Step>
+</Steps>
+
+Trigger migration by running `codex auth list` once in the worktree.
+
+## Version-Specific Upgrade Notes
+
+### Upgrading to v0.1.1
+
+**Released**: 2026-03-01
+
+#### Breaking Changes
+
+- **OAuth callback host**: Now canonicalized to `127.0.0.1:1455` (was `localhost:1455` in some contexts). If you have firewall rules or proxy configs, update them.
+
+#### Key Improvements
+
+- **Email deduplication**: Now case-insensitive via `normalizeEmailKey()` (trim + lowercase). `User@Example.Com` and `user@example.com` are now treated as the same account.
+- **Worktree account sharing**: Linked Git worktrees now share accounts via `resolveProjectStorageIdentityRoot`.
+- **Settings hub extraction**: CLI settings logic moved from `lib/codex-manager.ts` to `lib/codex-manager/settings-hub.ts` (~2100 lines). No user-facing changes.
+- **Settings panel hotkeys**: **Q** now cancels without saving (was save+back). Theme live-preview restores baseline on cancel.
+
+#### Migration Actions
+
+No manual migration required. Automatic migrations:
+
+- Worktree-keyed accounts auto-migrate on first `codex auth list` in worktree
+- Email deduplication applied on next account save
+
+### Upgrading to v0.1.0
+
+**Released**: 2026-02-27
+
+#### Breaking Changes
+
+- **Storage format**: Upgraded to V3 with automatic migration from V1/V2. Backup existing account files before upgrading:
+
+  ```bash
+  cp ~/.codex/multi-auth/openai-codex-accounts.json ~/.codex/multi-auth/openai-codex-accounts.json.backup
+  ```
+
+- **Config precedence**: Unified settings (`~/.codex/multi-auth/settings.json`) now take precedence over legacy config files.
+
+#### Migration Actions
+
+- **Rebuild account pool**: After upgrading, run `codex auth doctor --fix` to refresh all accounts.
+- **Verify settings**: Run `codex auth settings` to review and save unified settings.
+
+## Common Upgrade Problems
+
+<Accordion title="'codex auth' not found after upgrade">
+  **Likely cause**: Wrapper path conflict or cached npm binary.
+
+  **Solution**:
+
+  ```bash
+  # Check which binary is active
+  where codex       # Windows
+  which codex       # macOS/Linux
+
+  # Reinstall if needed
+  npm uninstall -g @ndycode/codex-multi-auth codex-multi-auth
+  npm i -g codex-multi-auth
+  ```
+</Accordion>
+
+<Accordion title="Old scoped package still active">
+  **Likely cause**: npm didn't fully remove the scoped package.
+
+  **Solution**:
+
+  ```bash
+  npm uninstall -g @ndycode/codex-multi-auth
+  npm cache clean --force
+  npm i -g codex-multi-auth
+  ```
+
+  Verify:
+
+  ```bash
+  npm ls -g codex-multi-auth
+  codex auth status
+  ```
+</Accordion>
+
+<Accordion title="Account pool appears stale after upgrade">
+  **Likely cause**: Token expiration or storage migration side effects.
+
+  **Solution**:
+
+  <Steps>
+    <Step title="Run doctor">
+      ```bash
+      codex auth doctor --fix
+      ```
+    </Step>
+
+    <Step title="Re-login impacted accounts">
+      ```bash
+      codex auth list
+      codex auth login
+      ```
+    </Step>
+
+    <Step title="Verify health">
+      ```bash
+      codex auth check
+      codex auth forecast --live
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="Mixed path confusion (global vs project accounts)">
+  **Likely cause**: Accounts stored in multiple locations due to `perProjectAccounts` toggle.
+
+  **Solution**: See [Storage Paths Reference](/cli/storage-paths) for canonical path resolution. Run `codex auth list` to trigger migration and consolidation.
+</Accordion>
+
+<Accordion title="Settings changes not taking effect">
+  **Likely cause**: Environment variable override taking precedence.
+
+  **Solution**: Check for environment overrides:
+
+  ```bash
+  # macOS/Linux
+  env | grep CODEX
+
+  # Windows PowerShell
+  Get-ChildItem Env: | Where-Object { $_.Name -like "CODEX*" }
+  ```
+
+  Remove conflicting overrides or edit `~/.codex/multi-auth/settings.json` directly.
+</Accordion>
+
+## Post-Upgrade Validation
+
+After upgrading, validate your installation:
+
+```bash
+# 1. Verify package version
+npm ls -g codex-multi-auth
+
+# 2. Check routing
+codex --version
+codex auth status
+
+# 3. Verify account health
+codex auth list
+codex auth check
+
+# 4. Test live quota
+codex auth forecast --live --model gpt-5-codex
+
+# 5. Verify settings
+codex auth settings
+# (Press Q to exit without saving)
+```
+
+## Downgrading (Not Recommended)
+
+Downgrading is **not supported** due to storage format changes. If you must revert:
+
+1. **Backup accounts**:
+   ```bash
+   cp ~/.codex/multi-auth/openai-codex-accounts.json ~/accounts-backup.json
+   ```
+
+2. **Uninstall current version**:
+   ```bash
+   npm uninstall -g codex-multi-auth
+   ```
+
+3. **Install target version**:
+   ```bash
+   npm i -g codex-multi-auth@0.1.0
+   ```
+
+4. **Restore accounts** (manual JSON edit may be required).
+
+<Warning>
+Downgrading may cause data loss or corruption. Storage format migrations are one-way. Always backup before downgrading.
+</Warning>
+
+## Related Resources
+
+- [Configuration Guide](/guides/configuration) — Settings migration
+- [Storage Paths Reference](/cli/storage-paths) — File locations
+- [Troubleshooting](/guides/troubleshooting) — Common upgrade issues
+- [CHANGELOG](https://github.com/ndycode/codex-multi-auth/blob/main/CHANGELOG.md) — Version history
+- [CONFIG_FLOW.md](https://github.com/ndycode/codex-multi-auth/blob/main/docs/development/CONFIG_FLOW.md) — Config resolution logic

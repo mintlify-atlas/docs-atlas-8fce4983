@@ -1,0 +1,75 @@
+---
+title: Introduction
+description: CLI-first multi-account OAuth manager for the official @openai/codex CLI
+---
+
+<img
+  src="https://github.com/user-attachments/assets/0cecb77e-a6d3-432a-ba48-3577db0c7093"
+  alt="Codex Multi-Auth Dashboard"
+/>
+
+Codex Multi-Auth is a CLI-first multi-account OAuth manager for the official `@openai/codex` CLI. It provides canonical account management workflows, intelligent failover, and operational safety features for development teams using ChatGPT Codex.
+
+<Note>
+  The legacy scoped prerelease package `@ndycode/codex-multi-auth` is migration-only. Use `codex-multi-auth` for all new installs.
+</Note>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Multi-account OAuth pool" icon="users">
+    Health-aware account selection with automatic failover when rate limits or quota issues are detected
+  </Card>
+  <Card title="Project-scoped storage" icon="folder-tree">
+    Per-project account storage under `~/.codex/multi-auth/projects/<project-key>/` with worktree support
+  </Card>
+  <Card title="Interactive dashboard" icon="terminal">
+    Manage accounts, check health, switch active accounts, and configure settings from a rich TUI
+  </Card>
+  <Card title="Operational safety" icon="shield-check">
+    Built-in forecast, report, fix, and doctor commands for proactive health monitoring and recovery
+  </Card>
+  <Card title="Session affinity" icon="link">
+    Live account sync controls and proactive refresh with preemptive quota deferral
+  </Card>
+  <Card title="Flagged account recovery" icon="arrow-rotate-right">
+    Automatic verification and restore flow for accounts flagged by health checks
+  </Card>
+</CardGroup>
+
+## What you get
+
+- **Canonical workflow** - `codex auth ...` commands for login, switching, checks, and diagnostics
+- **Intelligent routing** - Health-aware selection with automatic failover on rate limits or errors
+- **Project isolation** - Per-project account pools that follow your repository structure
+- **Rich diagnostics** - Forecast, report, fix, and doctor commands with JSON output support
+- **Session recovery** - Flagged account verification and automatic restore capabilities
+- **Fine-grained control** - Session affinity, proactive refresh, and quota deferral settings
+- **Codex compatibility** - Request/prompt compatibility with strict runtime handling
+
+<Warning>
+  This project uses OAuth account credentials and is intended for personal development use. You are responsible for your own usage and policy compliance. For production/commercial workloads, use the OpenAI Platform API.
+</Warning>
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install Codex Multi-Auth globally with npm, yarn, or pnpm
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Go from zero to your first working multi-account setup in 60 seconds
+  </Card>
+</CardGroup>
+
+## Community and support
+
+Codex Multi-Auth is an independent open-source project, not an official OpenAI product.
+
+- **GitHub** - [ndycode/codex-multi-auth](https://github.com/ndycode/codex-multi-auth)
+- **Issues** - [Report bugs or request features](https://github.com/ndycode/codex-multi-auth/issues)
+- **npm** - [codex-multi-auth](https://www.npmjs.com/package/codex-multi-auth)
+
+## Legal
+
+Not affiliated with OpenAI. "ChatGPT", "Codex", and "OpenAI" are trademarks of OpenAI. You assume responsibility for your own usage and compliance. See the [MIT License](https://github.com/ndycode/codex-multi-auth/blob/main/LICENSE) for details.

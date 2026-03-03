@@ -1,0 +1,513 @@
+---
+title: 'Environment Variables'
+description: 'All environment variables supported by Codex Multi-Auth'
+---
+
+## Overview
+
+Codex Multi-Auth supports environment variable overrides for most configuration settings. Environment variables take precedence over settings.json values.
+
+---
+
+## Directory and Path Configuration
+
+<ParamField path="CODEX_HOME" type="string">
+  Override the Codex home directory.
+  
+  **Default:** `~/.codex`
+  
+  **Example:** `export CODEX_HOME="/custom/path"`
+</ParamField>
+
+<ParamField path="CODEX_MULTI_AUTH_DIR" type="string">
+  Override the multi-auth storage directory.
+  
+  **Default:** `~/.codex/multi-auth`
+  
+  **Example:** `export CODEX_MULTI_AUTH_DIR="/custom/multi-auth"`
+</ParamField>
+
+<ParamField path="CODEX_MULTI_AUTH_CONFIG_PATH" type="string">
+  Override the config file location (legacy).
+  
+  **Note:** This is for legacy config.json files. Modern installations use settings.json.
+</ParamField>
+
+<ParamField path="CODEX_CLI_ACCOUNTS_PATH" type="string">
+  Override the Codex CLI accounts file path.
+  
+  **Default:** `~/.codex/accounts.json`
+</ParamField>
+
+<ParamField path="CODEX_CLI_AUTH_PATH" type="string">
+  Override the Codex CLI auth file path.
+  
+  **Default:** `~/.codex/auth.json`
+</ParamField>
+
+---
+
+## Core Features
+
+<ParamField path="CODEX_MODE" type="boolean" default="1">
+  Enable CODEX_MODE for Codex CLI parity.
+  
+  **Values:** `1` = enabled, `0` = disabled
+  
+  **Example:** `export CODEX_MODE=1`
+</ParamField>
+
+<ParamField path="CODEX_TUI_V2" type="boolean" default="1">
+  Enable the v2 terminal user interface.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_TUI_COLOR_PROFILE" type="string" default="truecolor">
+  TUI color profile mode.
+  
+  **Options:** `truecolor`, `ansi16`, `ansi256`
+  
+  **Example:** `export CODEX_TUI_COLOR_PROFILE=ansi256`
+</ParamField>
+
+<ParamField path="CODEX_TUI_GLYPHS" type="string" default="ascii">
+  TUI glyph rendering mode.
+  
+  **Options:** `ascii`, `unicode`, `auto`
+  
+  **Example:** `export CODEX_TUI_GLYPHS=unicode`
+</ParamField>
+
+---
+
+## Session Management
+
+<ParamField path="CODEX_AUTH_FAST_SESSION" type="boolean" default="0">
+  Enable fast session optimization.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_FAST_SESSION_STRATEGY" type="string" default="hybrid">
+  Fast session strategy.
+  
+  **Options:** `hybrid`, `always`
+</ParamField>
+
+<ParamField path="CODEX_AUTH_FAST_SESSION_MAX_INPUT_ITEMS" type="number" default="30">
+  Maximum input items for fast session.
+  
+  **Minimum:** 8
+</ParamField>
+
+<ParamField path="CODEX_AUTH_SESSION_RECOVERY" type="boolean" default="1">
+  Enable conversation state persistence.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_AUTO_RESUME" type="boolean" default="1">
+  Automatically resume interrupted sessions.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_SESSION_AFFINITY" type="boolean" default="1">
+  Enable session-to-account affinity.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_SESSION_AFFINITY_TTL_MS" type="number" default="1200000">
+  Session affinity TTL in milliseconds (20 minutes).
+  
+  **Minimum:** 1000
+</ParamField>
+
+<ParamField path="CODEX_AUTH_SESSION_AFFINITY_MAX_ENTRIES" type="number" default="512">
+  Maximum session affinity cache entries.
+  
+  **Minimum:** 8
+</ParamField>
+
+---
+
+## Account Management
+
+<ParamField path="CODEX_AUTH_PER_PROJECT_ACCOUNTS" type="boolean" default="1">
+  Enable per-project account storage.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_LIVE_ACCOUNT_SYNC" type="boolean" default="1">
+  Enable live account synchronization.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_LIVE_ACCOUNT_SYNC_DEBOUNCE_MS" type="number" default="250">
+  Live sync debounce interval in milliseconds.
+  
+  **Minimum:** 50
+</ParamField>
+
+<ParamField path="CODEX_AUTH_LIVE_ACCOUNT_SYNC_POLL_MS" type="number" default="2000">
+  Live sync polling interval in milliseconds.
+  
+  **Minimum:** 500
+</ParamField>
+
+---
+
+## Token Refresh
+
+<ParamField path="CODEX_AUTH_TOKEN_REFRESH_SKEW_MS" type="number" default="60000">
+  Token refresh skew window in milliseconds.
+  
+  **Minimum:** 0
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PROACTIVE_GUARDIAN" type="boolean" default="1">
+  Enable proactive token refresh guardian.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PROACTIVE_GUARDIAN_INTERVAL_MS" type="number" default="60000">
+  Proactive refresh check interval in milliseconds.
+  
+  **Minimum:** 5000
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PROACTIVE_GUARDIAN_BUFFER_MS" type="number" default="300000">
+  Buffer time before expiry to refresh in milliseconds (5 minutes).
+  
+  **Minimum:** 30000
+</ParamField>
+
+<ParamField path="CODEX_AUTH_REFRESH_LEASE" type="boolean">
+  Enable refresh lease coordination (advanced).
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_REFRESH_LEASE_DIR" type="string">
+  Directory for refresh lease coordination files.
+</ParamField>
+
+<ParamField path="CODEX_AUTH_REFRESH_LEASE_TTL_MS" type="number">
+  Refresh lease TTL in milliseconds.
+</ParamField>
+
+<ParamField path="CODEX_AUTH_REFRESH_LEASE_WAIT_MS" type="number">
+  Maximum wait time for refresh lease in milliseconds.
+</ParamField>
+
+<ParamField path="CODEX_AUTH_REFRESH_LEASE_POLL_MS" type="number">
+  Refresh lease polling interval in milliseconds.
+</ParamField>
+
+<ParamField path="CODEX_AUTH_REFRESH_LEASE_RESULT_TTL_MS" type="number">
+  Refresh result cache TTL in milliseconds.
+</ParamField>
+
+---
+
+## Retry and Error Handling
+
+<ParamField path="CODEX_AUTH_RETRY_ALL_RATE_LIMITED" type="boolean" default="1">
+  Retry all accounts when rate limited.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_RETRY_ALL_MAX_WAIT_MS" type="number" default="0">
+  Maximum wait time for retry-all in milliseconds (0 = no limit).
+  
+  **Minimum:** 0
+</ParamField>
+
+<ParamField path="CODEX_AUTH_RETRY_ALL_MAX_RETRIES" type="number" default="Infinity">
+  Maximum retry attempts when all accounts are rate limited.
+  
+  **Minimum:** 0
+</ParamField>
+
+<ParamField path="CODEX_AUTH_EMPTY_RESPONSE_MAX_RETRIES" type="number" default="2">
+  Maximum retries for empty responses.
+  
+  **Minimum:** 0
+</ParamField>
+
+<ParamField path="CODEX_AUTH_EMPTY_RESPONSE_RETRY_DELAY_MS" type="number" default="1000">
+  Delay between empty response retries in milliseconds.
+  
+  **Minimum:** 0
+</ParamField>
+
+<ParamField path="CODEX_AUTH_NETWORK_ERROR_COOLDOWN_MS" type="number" default="6000">
+  Cooldown after network errors in milliseconds.
+  
+  **Minimum:** 0
+</ParamField>
+
+<ParamField path="CODEX_AUTH_SERVER_ERROR_COOLDOWN_MS" type="number" default="4000">
+  Cooldown after server errors in milliseconds.
+  
+  **Minimum:** 0
+</ParamField>
+
+---
+
+## Model Fallback
+
+<ParamField path="CODEX_AUTH_UNSUPPORTED_MODEL_POLICY" type="string" default="strict">
+  Policy for unsupported models.
+  
+  **Options:** `strict`, `fallback`
+  
+  **Example:** `export CODEX_AUTH_UNSUPPORTED_MODEL_POLICY=fallback`
+</ParamField>
+
+<ParamField path="CODEX_AUTH_FALLBACK_UNSUPPORTED_MODEL" type="boolean">
+  **Legacy.** Use `CODEX_AUTH_UNSUPPORTED_MODEL_POLICY=fallback` instead.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_FALLBACK_GPT53_TO_GPT52" type="boolean" default="1">
+  Fallback GPT-5.3 to GPT-5.2 when unsupported.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+---
+
+## Timeouts
+
+<ParamField path="CODEX_AUTH_FETCH_TIMEOUT_MS" type="number" default="60000">
+  HTTP fetch timeout in milliseconds (1 minute).
+  
+  **Minimum:** 1000
+  
+  **Example:** `export CODEX_AUTH_FETCH_TIMEOUT_MS=30000`
+</ParamField>
+
+<ParamField path="CODEX_AUTH_STREAM_STALL_TIMEOUT_MS" type="number" default="45000">
+  Stream stall detection timeout in milliseconds (45 seconds).
+  
+  **Minimum:** 1000
+</ParamField>
+
+<ParamField path="CODEX_AUTH_RATE_LIMIT_TOAST_DEBOUNCE_MS" type="number" default="60000">
+  Rate limit toast debounce in milliseconds.
+  
+  **Minimum:** 0
+</ParamField>
+
+<ParamField path="CODEX_AUTH_TOAST_DURATION_MS" type="number" default="5000">
+  Toast notification duration in milliseconds.
+  
+  **Minimum:** 1000
+</ParamField>
+
+---
+
+## Preemptive Quota
+
+<ParamField path="CODEX_AUTH_PREEMPTIVE_QUOTA_ENABLED" type="boolean" default="1">
+  Enable preemptive quota checking.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PREEMPTIVE_QUOTA_5H_REMAINING_PCT" type="number" default="5">
+  5-hour quota remaining percentage threshold.
+  
+  **Range:** 0-100
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PREEMPTIVE_QUOTA_7D_REMAINING_PCT" type="number" default="5">
+  7-day quota remaining percentage threshold.
+  
+  **Range:** 0-100
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PREEMPTIVE_QUOTA_MAX_DEFERRAL_MS" type="number" default="7200000">
+  Maximum quota deferral time in milliseconds (2 hours).
+  
+  **Minimum:** 1000
+</ParamField>
+
+---
+
+## Advanced Features
+
+<ParamField path="CODEX_AUTH_PARALLEL_PROBING" type="boolean" default="0">
+  Enable parallel account health probing.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PARALLEL_PROBING_MAX_CONCURRENCY" type="number" default="2">
+  Maximum concurrent health probes.
+  
+  **Minimum:** 1
+</ParamField>
+
+<ParamField path="CODEX_AUTH_PID_OFFSET_ENABLED" type="boolean" default="0">
+  Enable process ID offset.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_AUTH_STORAGE_BACKUP_ENABLED" type="boolean" default="1">
+  Enable automatic storage backups.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+---
+
+## Sync and Bypass
+
+<ParamField path="CODEX_MULTI_AUTH_SYNC_CODEX_CLI" type="boolean">
+  Sync accounts with official Codex CLI.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_MULTI_AUTH_REAL_CODEX_BIN" type="string">
+  Path to real Codex CLI binary for sync.
+</ParamField>
+
+<ParamField path="CODEX_MULTI_AUTH_BYPASS" type="boolean">
+  Bypass multi-auth and use direct authentication.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+---
+
+## Logging and Debugging
+
+<ParamField path="CODEX_PLUGIN_LOG_BODIES" type="boolean" default="0">
+  Log full request/response bodies.
+  
+  **Values:** `1` = enabled, `0` = disabled
+  
+  **Warning:** Logs may contain sensitive data.
+</ParamField>
+
+<ParamField path="DEBUG_CODEX_PLUGIN" type="boolean" default="0">
+  Enable debug logging.
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+<ParamField path="CODEX_PLUGIN_LOG_LEVEL" type="string">
+  Set log level.
+  
+  **Options:** `debug`, `info`, `warn`, `error`
+</ParamField>
+
+<ParamField path="CODEX_CONSOLE_LOG" type="boolean" default="0">
+  Enable console logging (in addition to file logging).
+  
+  **Values:** `1` = enabled, `0` = disabled
+</ParamField>
+
+---
+
+## Prompt Customization
+
+<ParamField path="CODEX_PROMPT_SOURCE_URL" type="string">
+  Override URL for Codex prompt templates.
+</ParamField>
+
+<ParamField path="CODEX_CODEX_PROMPT_URL" type="string">
+  **Legacy.** Use `CODEX_PROMPT_SOURCE_URL` instead.
+</ParamField>
+
+<ParamField path="CODEX_COLLABORATION_MODE" type="string">
+  Set collaboration mode for multi-user scenarios.
+</ParamField>
+
+---
+
+## Quick Reference Table
+
+| Variable | Default | Type | Description |
+|----------|---------|------|-------------|
+| `CODEX_HOME` | `~/.codex` | string | Codex home directory |
+| `CODEX_MULTI_AUTH_DIR` | `~/.codex/multi-auth` | string | Multi-auth directory |
+| `CODEX_MODE` | `1` | boolean | Enable CODEX_MODE |
+| `CODEX_TUI_V2` | `1` | boolean | Enable TUI v2 |
+| `CODEX_AUTH_FETCH_TIMEOUT_MS` | `60000` | number | Request timeout |
+| `CODEX_AUTH_STREAM_STALL_TIMEOUT_MS` | `45000` | number | Stream timeout |
+| `CODEX_AUTH_SESSION_AFFINITY` | `1` | boolean | Session affinity |
+| `CODEX_AUTH_LIVE_ACCOUNT_SYNC` | `1` | boolean | Live sync |
+| `CODEX_AUTH_PROACTIVE_GUARDIAN` | `1` | boolean | Proactive refresh |
+| `CODEX_AUTH_PREEMPTIVE_QUOTA_ENABLED` | `1` | boolean | Quota checks |
+
+---
+
+## Boolean Value Format
+
+For boolean environment variables:
+- `1` = enabled/true
+- `0` = disabled/false
+
+Any other value is ignored and the default from settings.json or built-in default is used.
+
+---
+
+## Examples
+
+### Basic Configuration
+
+```bash
+# Enable debug logging
+export DEBUG_CODEX_PLUGIN=1
+
+# Use custom directory
+export CODEX_MULTI_AUTH_DIR="/custom/path"
+
+# Increase timeout
+export CODEX_AUTH_FETCH_TIMEOUT_MS=120000
+```
+
+### Development Setup
+
+```bash
+# Enable all debugging
+export DEBUG_CODEX_PLUGIN=1
+export CODEX_PLUGIN_LOG_BODIES=1
+export CODEX_PLUGIN_LOG_LEVEL=debug
+
+# Disable production features
+export CODEX_AUTH_PROACTIVE_GUARDIAN=0
+export CODEX_AUTH_LIVE_ACCOUNT_SYNC=0
+```
+
+### Performance Tuning
+
+```bash
+# Enable fast mode
+export CODEX_AUTH_FAST_SESSION=1
+export CODEX_AUTH_FAST_SESSION_STRATEGY=always
+
+# Parallel probing
+export CODEX_AUTH_PARALLEL_PROBING=1
+export CODEX_AUTH_PARALLEL_PROBING_MAX_CONCURRENCY=4
+```
+
+---
+
+## Related
+
+- [Settings Reference](/cli/settings-reference)
+- [Storage Paths](/cli/storage-paths)
+- [Configuration Guide](/guides/configuration)

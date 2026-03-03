@@ -1,0 +1,220 @@
+---
+title: codex auth status
+description: Print a concise runtime and account status summary
+---
+
+Display a quick overview of the current account state, including active account, total count, and storage location.
+
+## Usage
+
+```bash
+codex auth status
+```
+
+No options or arguments required.
+
+## Output Format
+
+The command prints:
+
+1. Total account count
+2. Storage file path
+3. Numbered list of accounts with status markers
+4. Last-used timestamp for each account
+
+## Example Output
+
+```
+Accounts (4)
+Storage: /home/user/.codex/multi-auth/openai-codex-accounts.json
+
+1. alice@example.com [current] used 15 minutes ago
+2. bob@work.com used 2 hours ago
+3. carol@personal.com [disabled] used 3 days ago
+4. dave@test.com [rate-limited, cooldown:1h30m] used 45 minutes ago
+```
+
+## Status Markers
+
+<ParamField path="current" type="marker">
+  This account is active for API requests.
+</ParamField>
+
+<ParamField path="disabled" type="marker">
+  Account is disabled and won't be used for rotation.
+</ParamField>
+
+<ParamField path="rate-limited" type="marker">
+  Account hit rate limits and is temporarily unavailable.
+</ParamField>
+
+<ParamField path="cooldown:duration" type="marker">
+  Account in cooldown period. Shows remaining time (e.g., `1h30m`, `45s`).
+</ParamField>
+
+### Multiple Markers
+
+Accounts can have multiple status markers:
+
+```
+4. user@example.com [rate-limited, cooldown:2h15m] used 1 hour ago
+```
+
+This means the account is both rate-limited and cooling down for 2 hours 15 minutes.
+
+## Account Labels
+
+Each account shows the first available identifier:
+
+1. **Email address** - Preferred (e.g., `alice@example.com`)
+2. **Custom label** - If set (e.g., `Work Account`)
+3. **Account ID** - From token (e.g., `user-abc123`)
+4. **Token prefix** - Fallback (e.g., `token-xyz789...`)
+
+## Timestamp Format
+
+Last-used times are shown as relative durations:
+
+- `never used` - Account hasn't been used yet
+- `used 5 seconds ago`
+- `used 3 minutes ago`
+- `used 2 hours ago`
+- `used 4 days ago`
+
+Timestamps update when:
+
+- API requests succeed
+- Tokens are refreshed
+- Accounts are manually switched
+
+## Empty State
+
+```
+No accounts configured.
+Storage: /home/user/.codex/multi-auth/openai-codex-accounts.json
+```
+
+Run [`codex auth login`](/cli/auth-login) to add accounts.
+
+## Exit Codes
+
+- `0` - Always succeeds (even with zero accounts)
+- `1` - Storage read failure
+
+## Examples
+
+### Quick status check
+
+```bash
+codex auth status
+```
+
+### Verify active account
+
+```bash
+codex auth status | grep current
+```
+
+### Count total accounts
+
+```bash
+codex auth status | head -1
+# Output: Accounts (4)
+```
+
+### Check for rate-limited accounts
+
+```bash
+if codex auth status | grep -q rate-limited; then
+  echo "Some accounts are rate-limited"
+  codex auth forecast --live
+fi
+```
+
+## Comparison with Other Commands
+
+### `codex auth status` vs `codex auth list`
+
+Both show similar information. `status` is an alias for `list`.
+
+### `codex auth status` vs `codex auth check`
+
+| Command | Purpose | Speed |
+| --- | --- | --- |
+| `status` | Show current state (no validation) | Instant |
+| `check` | Validate tokens and refresh if needed | Slow (network calls) |
+
+Use `status` for quick lookups, `check` for validation.
+
+### `codex auth status` vs `codex auth report --json`
+
+| Command | Output | Use Case |
+| --- | --- | --- |
+| `status` | Human-readable text | Quick terminal checks |
+| `report --json` | Machine-readable JSON | Automation, scripting |
+
+## Related Commands
+
+- [`codex auth list`](/cli/auth-list) - Identical output
+- [`codex auth check`](/cli/auth-check) - Validate account health
+- [`codex auth switch`](/cli/auth-switch) - Change active account
+- [`codex auth report`](/cli/auth-report) - Detailed health report
+- [`codex auth forecast`](/cli/auth-forecast) - Predict best account
+
+## Storage Location
+
+The storage path varies based on configuration:
+
+### Default (Global)
+
+```
+~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+### Project-Scoped
+
+When inside a Git repository:
+
+```
+~/.codex/multi-auth/projects/<project-key>/openai-codex-accounts.json
+```
+
+### Custom Root
+
+When `CODEX_MULTI_AUTH_DIR` is set:
+
+```
+$CODEX_MULTI_AUTH_DIR/openai-codex-accounts.json
+```
+
+See [Storage Paths](/cli/storage-paths) for details.
+
+## Troubleshooting
+
+### Status Shows Wrong Active Account
+
+Force a refresh:
+
+```bash
+codex auth switch 1  # Switch to account 1
+codex auth status    # Verify change
+```
+
+### Storage Path Missing
+
+The file is created on first login:
+
+```bash
+codex auth login
+codex auth status
+```
+
+### Cooldown Not Clearing
+
+Cooldowns are based on rate limit reset times from the API. To clear immediately:
+
+```bash
+codex auth login     # Open dashboard
+# Select account → press E to disable
+# Press E again to re-enable (clears cooldown)
+```

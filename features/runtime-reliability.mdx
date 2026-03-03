@@ -1,0 +1,422 @@
+---
+title: "Runtime Reliability"
+description: "Live account sync, proactive refresh, failure policies, cooldown management, and stream failover for Codex Multi-Auth"
+---
+
+## Overview
+
+Codex Multi-Auth provides production-grade runtime reliability features that keep your authentication seamless even under adverse conditions like rate limits, network errors, and token expiry.
+
+## Live Account Sync
+
+Reload account state without restarting your editor or process.
+
+<CardGroup cols={2}>
+  <Card title="File System Watching" icon="eye">
+    Uses `fs.watch` to detect account storage changes in real-time with debounced reload.
+  </Card>
+  <Card title="Polling Fallback" icon="rotate">
+    Polls file mtime every 2 seconds for platforms where fs.watch is unreliable (Windows).
+  </Card>
+  <Card title="Zero Downtime" icon="bolt">
+    Reloads accounts in background without interrupting active requests or streams.
+  </Card>
+  <Card title="Concurrency Safe" icon="lock">
+    Prevents concurrent reloads with in-flight request queuing.
+  </Card>
+</CardGroup>
+
+### How It Works
+
+```typescript
+const liveSync = new LiveAccountSync(async () => {
+  // Reload callback: reloads account manager from disk
+  await accountManager.reload();
+});
+
+// Start watching storage file
+await liveSync.syncToPath('/path/to/accounts.json');
+```
+
+**Debounce:** Changes are debounced by 250ms to batch rapid writes.
+
+**Polling Interval:** 2 seconds (configurable via `pollIntervalMs`).
+
+### Use Cases
+
+- **Multi-Instance Sync:** Keep multiple editor windows in sync
+- **External CLI Updates:** Reflect `codex auth login` changes immediately
+- **Team Workflows:** Share account updates via version control (with encrypted tokens)
+- **CI/CD:** Reload accounts after secret injection
+
+### Monitoring
+
+```typescript
+const snapshot = liveSync.getSnapshot();
+console.log(snapshot);
+// {
+//   path: '~/.codex/multi-auth/openai-codex-accounts.json',
+//   running: true,
+//   lastKnownMtimeMs: 1709481234567,
+//   lastSyncAt: 1709481238901,
+//   reloadCount: 5,
+//   errorCount: 0
+// }
+```
+
+## Proactive Token Refresh
+
+Refresh OAuth tokens before they expire to prevent mid-request failures.
+
+### Refresh Guardian
+
+```typescript
+// Default: refresh 5 minutes before expiry
+const DEFAULT_PROACTIVE_BUFFER_MS = 5 * 60 * 1000;
+
+// Check if account needs proactive refresh
+if (shouldRefreshProactively(account, bufferMs)) {
+  await proactiveRefreshAccount(account);
+}
+```
+
+<Card title="Refresh Strategy" icon="arrows-rotate">
+  - **Buffer Window:** 5-minute default (configurable via `tokenRefreshSkewMs`)
+  - **Parallel Refresh:** Refreshes multiple accounts concurrently
+  - **Queued Deduplication:** Uses refresh queue to prevent duplicate refresh requests
+  - **Failure Handling:** Logs failures but doesn't block request flow
+</Card>
+
+### Bulk Refresh
+
+```typescript
+// Refresh all expiring accounts
+const results = await refreshExpiringAccounts(accounts);
+
+for (const [index, result] of results) {
+  if (result.reason === 'success') {
+    console.log(`Account ${index}: refreshed successfully`);
+  } else if (result.reason === 'failed') {
+    console.log(`Account ${index}: refresh failed`);
+  }
+}
+```
+
+**Summary Logging:**
+```
+Proactively refreshing 3 account(s)
+Proactive refresh complete: 3 total, 2 succeeded, 1 failed
+```
+
+### Benefits
+
+- Reduces auth failures during long-running requests
+- Improves UX with seamless token rotation
+- Works alongside reactive refresh in fetch pipeline
+- No configuration required (enabled by default)
+
+## Failure Policy
+
+Unified retry and failover decisions for network errors, auth failures, and rate limits.
+
+### Policy Decision Tree
+
+```typescript
+type FailureAction = 'retry' | 'rotate' | 'fail';
+
+// Network errors → retry with backoff
+if (isNetworkError(error)) {
+  return { action: 'retry', backoffMs: 1000 };
+}
+
+// Auth failures → rotate to next account
+if (error.statusCode === 401) {
+  return { action: 'rotate', reason: 'auth-failure' };
+}
+
+// Rate limits → rotate with cooldown
+if (error.statusCode === 429) {
+  return { 
+    action: 'rotate', 
+    cooldownMs: parseRetryAfter(error.headers),
+    reason: 'rate-limit'
+  };
+}
+
+// Fatal errors → fail fast
+if (error.statusCode === 400) {
+  return { action: 'fail', reason: 'client-error' };
+}
+```
+
+### Retry Categories
+
+| Error Type | Status Code | Action | Backoff |
+|------------|-------------|--------|----------|
+| Network timeout | - | Retry | Exponential (1s, 2s, 4s) |
+| Connection refused | - | Retry | Exponential (1s, 2s, 4s) |
+| DNS failure | - | Retry | Exponential (1s, 2s, 4s) |
+| Auth failure | 401 | Rotate | Immediate |
+| Rate limit | 429 | Rotate | Parse `Retry-After` header |
+| Server error | 5xx | Rotate | Immediate |
+| Client error | 400, 403, 404 | Fail | None |
+
+### Cooldown Management
+
+```typescript
+type CooldownReason = 'auth-failure' | 'network-error' | 'rate-limit';
+
+interface AccountMetadata {
+  coolingDownUntil?: number;    // Timestamp when cooldown expires
+  cooldownReason?: CooldownReason;
+}
+```
+
+**Cooldown Durations:**
+- **Auth Failure:** 60 seconds (hard failure cooldown)
+- **Network Error:** 30 seconds (soft retry cooldown)
+- **Rate Limit:** Parse from `Retry-After` header or default 60 seconds
+
+**Cooldown Behavior:**
+```typescript
+if (account.coolingDownUntil && account.coolingDownUntil > Date.now()) {
+  // Skip account during selection
+  continue;
+}
+```
+
+## Rate Limit Backoff
+
+Exponential backoff with jitter for retry attempts.
+
+### Backoff Algorithm
+
+```typescript
+const baseDelay = 1000;  // 1 second
+const maxDelay = 32000;  // 32 seconds
+const jitterFactor = 0.1;  // ±10% randomization
+
+function calculateBackoff(attempt: number): number {
+  const exponential = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+  const jitter = exponential * jitterFactor * (Math.random() * 2 - 1);
+  return Math.floor(exponential + jitter);
+}
+```
+
+**Attempt Progression:**
+- Attempt 1: ~1000ms ± 10%
+- Attempt 2: ~2000ms ± 10%
+- Attempt 3: ~4000ms ± 10%
+- Attempt 4: ~8000ms ± 10%
+- Attempt 5: ~16000ms ± 10%
+- Attempt 6+: ~32000ms ± 10% (capped)
+
+### Retry-After Header
+
+Respects server-provided retry hints:
+
+```typescript
+// Parse Retry-After header
+const retryAfter = response.headers.get('Retry-After');
+if (retryAfter) {
+  // Numeric: seconds until retry
+  if (/^\d+$/.test(retryAfter)) {
+    return parseInt(retryAfter, 10) * 1000;
+  }
+  // HTTP-date: parse and calculate delta
+  const retryDate = new Date(retryAfter);
+  return Math.max(0, retryDate.getTime() - Date.now());
+}
+```
+
+## Stream Failover
+
+Recover from stalled SSE streams with automatic failover.
+
+### Stall Detection
+
+```typescript
+// Timeout if no data received for 30 seconds
+const STREAM_STALL_TIMEOUT_MS = 30_000;
+
+let lastDataTimestamp = Date.now();
+stream.on('data', (chunk) => {
+  lastDataTimestamp = Date.now();
+  processChunk(chunk);
+});
+
+const stallTimer = setInterval(() => {
+  if (Date.now() - lastDataTimestamp > STREAM_STALL_TIMEOUT_MS) {
+    stream.abort();
+    initiateFailover();
+  }
+}, 5000);
+```
+
+### Failover Strategy
+
+<Card title="Recovery Steps" icon="life-ring">
+  1. **Detect Stall:** No data received for 30 seconds
+  2. **Abort Stream:** Close stalled connection
+  3. **Account Rotation:** Switch to next healthy account
+  4. **Resume Request:** Retry from last successful chunk
+  5. **State Reconstruction:** Rebuild partial response if possible
+  6. **Fallback:** Return partial content or error if unrecoverable
+</Card>
+
+### Partial Content Recovery
+
+```typescript
+interface StreamState {
+  chunksReceived: number;
+  lastCompleteMessage: string;
+  partialBuffer: string;
+}
+
+// Resume after failover
+if (state.lastCompleteMessage) {
+  // Continue from last complete SSE message
+  yield state.lastCompleteMessage;
+}
+```
+
+## Session Affinity
+
+Reduce account thrash by maintaining session-to-account affinity.
+
+### Affinity Cache
+
+```typescript
+const sessionAffinity = new Map<string, number>();  // sessionId → accountIndex
+
+// Sticky account for conversation
+function selectAccount(sessionId?: string): number {
+  if (sessionId && sessionAffinity.has(sessionId)) {
+    const affinityIndex = sessionAffinity.get(sessionId);
+    if (isAccountHealthy(affinityIndex)) {
+      return affinityIndex;  // Reuse same account
+    }
+  }
+  
+  // Select new account if no affinity or account unhealthy
+  const newIndex = selectHealthyAccount();
+  if (sessionId) {
+    sessionAffinity.set(sessionId, newIndex);
+  }
+  return newIndex;
+}
+```
+
+**Benefits:**
+- Reduces auth header changes mid-conversation
+- Improves quota tracking accuracy
+- Minimizes account switching overhead
+
+**Eviction:** Affinity cleared when account fails or becomes unhealthy.
+
+## Circuit Breaker
+
+Isolate failing accounts to prevent cascade failures.
+
+### Breaker States
+
+```typescript
+type CircuitState = 'closed' | 'open' | 'half-open';
+
+interface CircuitBreaker {
+  state: CircuitState;
+  failureCount: number;
+  lastFailureTime: number;
+  nextRetryTime: number;
+}
+```
+
+**State Transitions:**
+- **Closed:** Normal operation, requests allowed
+- **Open:** Failure threshold exceeded, fast-fail all requests
+- **Half-Open:** Test request allowed after timeout, auto-close on success
+
+### Thresholds
+
+```typescript
+const FAILURE_THRESHOLD = 5;        // Open circuit after 5 failures
+const OPEN_DURATION_MS = 60_000;    // Stay open for 60 seconds
+const HALF_OPEN_DURATION_MS = 5_000; // Test for 5 seconds before closing
+```
+
+### Integration
+
+```typescript
+if (circuitBreaker.state === 'open') {
+  // Skip account, try next
+  continue;
+}
+
+try {
+  const result = await makeRequest(account);
+  circuitBreaker.recordSuccess();
+  return result;
+} catch (error) {
+  circuitBreaker.recordFailure();
+  throw error;
+}
+```
+
+## Observability
+
+Runtime telemetry for monitoring reliability features:
+
+```typescript
+interface RuntimeMetrics {
+  liveSync: {
+    reloadCount: number;
+    errorCount: number;
+    lastSyncAt: number;
+  };
+  proactiveRefresh: {
+    refreshCount: number;
+    successCount: number;
+    failureCount: number;
+  };
+  failover: {
+    rotationCount: number;
+    retryCount: number;
+    failCount: number;
+  };
+  cooldowns: {
+    activeCount: number;
+    totalCooldownTime: number;
+  };
+}
+```
+
+**Access Metrics:**
+```typescript
+const metrics = await codexManager.getMetrics();
+console.log(JSON.stringify(metrics, null, 2));
+```
+
+## Best Practices
+
+<Card title="Reliability Recommendations" icon="check-circle">
+  1. **Enable Live Sync:** Keep `liveAccountSync: true` for multi-instance setups
+  2. **Monitor Cooldowns:** High cooldown rates indicate account or network issues
+  3. **Proactive Refresh:** Use default 5-minute buffer unless latency-sensitive
+  4. **Respect Rate Limits:** Don't override cooldown timers manually
+  5. **Session Affinity:** Enable for conversational workloads to reduce churn
+  6. **Circuit Breakers:** Isolate chronically failing accounts with `enabled: false`
+  7. **Logs:** Monitor `lib/logger.ts` output for failure patterns
+</Card>
+
+## Related Settings
+
+- `tokenRefreshSkewMs` - Proactive refresh buffer (default: 5 minutes)
+- `liveAccountSync` - Enable live file watching (default: `true`)
+- `maxRetryAttempts` - Maximum retry attempts per request (default: 3)
+- `cooldownDurationMs` - Default cooldown duration (default: 60 seconds)
+
+## Related Commands
+
+- [`codex auth check`](/cli/auth-check) - View active cooldowns and rate limits
+- [`codex auth forecast`](/cli/auth-forecast) - See account availability with wait times
+- [`codex auth doctor`](/cli/auth-doctor) - Diagnose reliability issues

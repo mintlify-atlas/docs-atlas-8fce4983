@@ -1,0 +1,235 @@
+---
+title: Contributing Guidelines
+description: Development setup, standards, and contribution workflow for Codex Multi-Auth
+---
+
+Thanks for contributing to Codex Multi-Auth. This project prioritizes policy-compliant OAuth usage, predictable CLI behavior, strong regression coverage, and documentation parity.
+
+## Scope and Compliance
+
+All contributions must remain within this scope:
+
+- **Official OAuth authentication flows only** - PKCE-based OAuth2 with proper token lifecycle management
+- **No token scraping, cookie extraction, or auth bypasses** - All authentication must use legitimate OAuth endpoints
+- **No rate-limit circumvention techniques** - Respect OpenAI's rate limiting and usage policies
+- **No commercial multi-user resale features** - This is a developer productivity tool for individual use
+
+If a proposal conflicts with OpenAI policy boundaries, it will be declined.
+
+## Local Setup
+
+<Steps>
+  <Step title="Clone and Install">
+    ```bash
+    git clone https://github.com/ndycode/codex-multi-auth.git
+    cd codex-multi-auth
+    npm ci
+    ```
+  </Step>
+
+  <Step title="Run Quality Checks">
+    ```bash
+    npm run typecheck  # TypeScript strict mode validation
+    npm run lint       # ESLint (TS + scripts)
+    npm test           # Vitest suite (87 files, 2071 tests)
+    npm run build      # tsc + copy oauth-success.html
+    ```
+  </Step>
+
+  <Step title="Verify Installation">
+    ```bash
+    # Test the CLI wrapper
+    ./scripts/codex.js --version
+    
+    # Verify repo hygiene
+    npm run clean:repo:check
+    ```
+  </Step>
+</Steps>
+
+**Node requirement:** `>=18.0.0`
+
+## Development Standards
+
+### Code Quality Requirements
+
+- **TypeScript strict mode** - All code must pass `strict: true` compilation
+- **No type escape hatches** - Forbidden: `as any`, `@ts-ignore`, `@ts-expect-error`
+- **Behavior-focused tests** - All user-visible changes require test coverage
+- **Documentation parity** - Keep docs aligned when commands, flags, paths, or defaults change
+
+### TypeScript Conventions
+
+```typescript
+// Template literal types for compile-time safety
+type QuotaKey = `quota-${string}`;
+
+// Discriminated unions for state management
+type TokenResult = 
+  | { success: true; accessToken: string }
+  | { success: false; error: string };
+
+// Zod for runtime validation
+import { z } from 'zod';
+const AccountSchema = z.object({
+  accountId: z.string(),
+  refreshToken: z.string(),
+  addedAt: z.number(),
+  lastUsed: z.number(),
+});
+```
+
+### Documentation Requirements
+
+When making behavior changes, update these files:
+
+- `README.md` - High-level overview and quick start
+- `docs/getting-started.md` - Installation and first-time setup
+- `docs/features.md` - Feature descriptions and use cases
+- Affected `docs/reference/*` files - Command references, settings, paths
+
+## Pull Request Process
+
+<Steps>
+  <Step title="Create Focused Branch">
+    ```bash
+    git checkout -b feature/account-health-improvements
+    ```
+    
+    Keep branches focused on a single feature or fix. Atomic commits are preferred.
+  </Step>
+
+  <Step title="Run Full Local Gate">
+    ```bash
+    npm run typecheck  # Must pass with no errors
+    npm run lint       # Must pass with no warnings
+    npm test           # All 2071 tests must pass
+    npm run build      # Must build successfully
+    ```
+  </Step>
+
+  <Step title="Include Command Evidence">
+    In your PR description, include output from:
+    
+    ```bash
+    codex --version
+    codex auth status
+    codex auth report --json
+    ```
+    
+    This helps reviewers understand the runtime behavior.
+  </Step>
+
+  <Step title="Document Behavior Changes">
+    - Update relevant documentation files
+    - Include migration notes for breaking changes
+    - Add examples of new functionality
+    - Update CHANGELOG.md (if maintaining one)
+  </Step>
+
+  <Step title="Security Checklist">
+    - No secrets or local runtime data committed
+    - No `~/.codex/` directory contents
+    - No auth tokens or refresh tokens
+    - No debug logs with sensitive data
+  </Step>
+</Steps>
+
+Use `.github/pull_request_template.md` when opening the PR.
+
+## Issue and Feature Requests
+
+### Before Opening Issues
+
+- **Search existing issues and PRs** - Avoid duplicates
+- **Reproduce on latest `main`** when possible
+- **Include exact commands, output, and environment data**
+
+### Bug Report Requirements
+
+Include this diagnostic information:
+
+```bash
+codex --version
+codex auth status
+codex auth report --json
+npm ls -g codex-multi-auth
+
+# Environment
+node --version
+npm --version
+uname -a  # or `ver` on Windows
+```
+
+### Feature Request Format
+
+Include:
+
+- **User impact** - Who benefits and how?
+- **Policy/compliance consideration** - Does this align with OpenAI terms?
+- **Alternatives considered** - What other approaches did you evaluate?
+- **Implementation sketch** - Rough technical approach (optional)
+
+## Security Reporting
+
+**Do not open public issues for vulnerabilities.**
+
+Follow [SECURITY.md](https://github.com/ndycode/codex-multi-auth/blob/main/SECURITY.md) for private disclosure:
+
+1. Contact the maintainer privately via GitHub profile contact channel
+2. Include vulnerability description, reproduction steps, and impact assessment
+3. Target response time: within 48 hours
+
+See [Security Practices](/advanced/security) for more details.
+
+## Code of Conduct
+
+### Expected Behavior
+
+- Respectful, constructive communication
+- Technically grounded discussions with evidence
+- Clear reproduction steps when reporting issues
+- Focus on facts and problem-solving
+
+### Unacceptable Behavior
+
+- Requests to violate policy boundaries or OpenAI terms
+- Credential sharing or unsafe security guidance
+- Abusive or hostile communication
+- Demands for features that enable terms violations
+
+## Testing Philosophy
+
+See [Testing Guidelines](/advanced/testing) for detailed testing practices.
+
+Key principles:
+
+- **80% coverage threshold** across statements, branches, functions, and lines
+- **Property-based testing** for rotation logic and edge cases (using `fast-check`)
+- **Chaos testing** for fault injection scenarios
+- **Windows filesystem safety** - All cleanup uses `removeWithRetry` with EBUSY backoff
+
+## Repository Hygiene
+
+```bash
+# Clean generated files deterministically
+npm run clean:repo
+
+# Validate repo hygiene (CI-gated)
+npm run clean:repo:check
+```
+
+The hygiene script ensures no committed artifacts in:
+
+- `dist/` - Build output
+- `.tmp*/` - Temporary directories
+- `coverage/` - Test coverage reports
+- `node_modules/` - Dependencies
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the MIT License as specified in [LICENSE](https://github.com/ndycode/codex-multi-auth/blob/main/LICENSE).
+
+<Info>
+This project is not affiliated with OpenAI. For OpenAI platform concerns, contact OpenAI directly.
+</Info>

@@ -1,0 +1,200 @@
+---
+title: codex auth switch
+description: Set the active account by index number
+---
+
+Switch to a different account for all subsequent API requests.
+
+## Usage
+
+```bash
+codex auth switch <index>
+```
+
+<ParamField path="index" type="number" required>
+  The 1-based index of the account to activate. Shown in `codex auth list` output.
+</ParamField>
+
+## How It Works
+
+1. Loads the account at the specified index (1-based)
+2. Updates the active account pointer in storage
+3. Syncs the selection to Codex CLI state
+4. All future API requests use the new active account
+
+## Examples
+
+### Switch to first account
+
+```bash
+codex auth switch 1
+```
+
+### Switch to third account
+
+```bash
+codex auth switch 3
+```
+
+### Switch and verify
+
+```bash
+codex auth switch 2
+codex auth list | grep current
+# Output: 2. bob@example.com [current] used just now
+```
+
+## Index Validation
+
+The command validates the index before switching:
+
+### Invalid Index (Too High)
+
+```bash
+codex auth switch 99
+# Error: Account index 99 out of range (1-4)
+```
+
+### Invalid Index (Zero or Negative)
+
+```bash
+codex auth switch 0
+# Error: Account index must be >= 1
+```
+
+### Non-Numeric Index
+
+```bash
+codex auth switch abc
+# Error: Account index must be a number
+```
+
+## Account Selection Priority
+
+When you switch accounts, the plugin uses the new account for:
+
+1. **Immediate requests** - Next API call uses the switched account
+2. **Session affinity** - Conversations continue with the same account
+3. **Forecast fallback** - If switched account fails, forecast picks the next best
+
+## Syncing with Codex CLI
+
+The switch command updates both:
+
+- **Multi-auth storage**: `~/.codex/multi-auth/openai-codex-accounts.json`
+- **Codex CLI state**: `~/.codex/cli/state.json`
+
+This ensures both tools use the same active account.
+
+## Exit Codes
+
+<ParamField path="0" type="exit code">
+  Success - account switched
+</ParamField>
+
+<ParamField path="1" type="exit code">
+  Error - invalid index, no accounts, or storage failure
+</ParamField>
+
+## Related Commands
+
+- [`codex auth list`](/cli/auth-list) - Show account indices
+- [`codex auth status`](/cli/auth-status) - Verify active account
+- [`codex auth check`](/cli/auth-check) - Validate switched account health
+- [`codex auth forecast`](/cli/auth-forecast) - Find best account to switch to
+
+## Dashboard Alternative
+
+You can also switch accounts in the interactive dashboard:
+
+```bash
+codex auth login
+# Press 1-9 to quick-switch
+# Or select account → press S
+```
+
+## Per-Family Active Index
+
+If you use multiple model families (e.g., `gpt-5-codex` and `gpt-5-turbo`), each family can have a different active account.
+
+The switch command updates the active index for **all** families by default.
+
+To switch only for the current model family, use the dashboard's per-family switching.
+
+## Troubleshooting
+
+### Switch Succeeds But Wrong Account Used
+
+Clear session affinity:
+
+```bash
+rm ~/.codex/multi-auth/session-affinity.json
+codex auth switch 1
+```
+
+### Switch Fails with Storage Error
+
+Check file permissions:
+
+```bash
+ls -la ~/.codex/multi-auth/
+# Ensure openai-codex-accounts.json is writable
+```
+
+Repair with:
+
+```bash
+codex auth fix --live
+codex auth switch 1
+```
+
+### Account Index Changed After Sorting
+
+If dashboard sorting is enabled, visible indices may differ from storage indices.
+
+Disable sorting in settings or use the dashboard for switches.
+
+## Automation Examples
+
+### Rotate through all accounts
+
+```bash
+for i in {1..5}; do
+  codex auth switch $i && codex auth check
+done
+```
+
+### Switch to account with most quota
+
+```bash
+# Get best account index from forecast
+BEST=$(codex auth forecast --json | jq -r '.recommendation.index + 1')
+codex auth switch $BEST
+```
+
+### Conditional switching
+
+```bash
+# Switch only if current account is rate-limited
+if codex auth status | grep -q "rate-limited"; then
+  codex auth switch 2
+fi
+```
+
+## Interactive Alternatives
+
+For more control, use the dashboard:
+
+```bash
+codex auth login
+# View account details before switching
+# See quota levels and health scores
+# Quick-switch with 1-9 keys
+```
+
+Or use forecast to pick the best account:
+
+```bash
+codex auth forecast --live
+# Shows recommended account with reasoning
+```

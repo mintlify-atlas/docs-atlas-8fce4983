@@ -1,0 +1,424 @@
+---
+title: Testing Guidelines
+description: Test suite architecture, coverage requirements, and testing best practices for Codex Multi-Auth
+---
+
+Codex Multi-Auth maintains a comprehensive test suite with **2,071 tests** across **87 test files**, enforcing an **80% coverage threshold** for statements, branches, functions, and lines.
+
+## Test Suite Overview
+
+### Technology Stack
+
+- **Test Framework**: Vitest with globals enabled
+- **Coverage Provider**: V8 (via `@vitest/coverage-v8`)
+- **Property Testing**: `fast-check` and `@fast-check/vitest`
+- **Mocking**: Vitest's built-in `vi.mock()` and `vi.useFakeTimers()`
+
+### Coverage Thresholds
+
+```typescript
+// vitest.config.ts
+coverage: {
+  provider: 'v8',
+  reporter: ['text', 'json', 'html'],
+  thresholds: {
+    statements: 80,
+    branches: 80,
+    functions: 80,
+    lines: 80,
+  },
+}
+```
+
+## Running Tests
+
+### Basic Test Commands
+
+```bash
+# Run all tests once
+npm test
+
+# Watch mode (re-run on file changes)
+npm run test:watch
+
+# Coverage report with thresholds
+npm run test:coverage
+
+# Interactive UI
+npm run test:ui
+```
+
+### Specialized Test Suites
+
+```bash
+# Model matrix testing
+npm run test:model-matrix
+npm run test:model-matrix:smoke
+
+# Edit format benchmarks
+npm run bench:edit-formats
+npm run bench:edit-formats:smoke
+```
+
+## Test Architecture
+
+### Core Test Categories
+
+| Category | Files | Focus |
+|----------|-------|-------|
+| **OAuth Flow** | `auth.test.ts`, `oauth-server.integration.test.ts` | PKCE, JWT decoding, callback server (port 1455) |
+| **Account Rotation** | `rotation.test.ts`, `rotation-integration.test.ts` | Health scoring, account selection, cooldown |
+| **Storage** | `storage.test.ts`, `storage-async.test.ts` | V3 format, worktree migration, concurrent access |
+| **Request Pipeline** | `request-transformer.test.ts`, `response-handler.test.ts` | Model normalization, SSE parsing |
+| **CLI Management** | `codex-manager-cli.test.ts`, `cli.test.ts` | Settings UI, Q cancel, hotkeys |
+| **Property Tests** | `property/*.test.ts` | Fast-check randomized testing |
+| **Chaos Tests** | `chaos/fault-injection.test.ts` | Fault injection scenarios |
+
+## Example Test Patterns
+
+### OAuth Flow Testing
+
+```typescript
+// test/auth.test.ts
+import { describe, it, expect } from 'vitest';
+import { parseAuthorizationInput, createState } from '../lib/auth/auth.js';
+
+describe('Auth Module', () => {
+  describe('parseAuthorizationInput', () => {
+    it('should parse full OAuth callback URL', () => {
+      const input = 'http://127.0.0.1:1455/auth/callback?code=abc123&state=xyz789';
+      const result = parseAuthorizationInput(input);
+      expect(result).toEqual({ code: 'abc123', state: 'xyz789' });
+    });
+
+    it('should parse code#state format', () => {
+      const input = 'abc123#xyz789';
+      const result = parseAuthorizationInput(input);
+      expect(result).toEqual({ code: 'abc123', state: 'xyz789' });
+    });
+  });
+
+  describe('createState', () => {
+    it('should generate a random 32-character hex string', () => {
+      const state = createState();
+      expect(state).toMatch(/^[a-f0-9]{32}$/);
+    });
+
+    it('should generate unique states', () => {
+      const state1 = createState();
+      const state2 = createState();
+      expect(state1).not.toBe(state2);
+    });
+  });
+});
+```
+
+### Account Rotation Testing
+
+```typescript
+// test/rotation.test.ts
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { HealthScoreTracker, DEFAULT_HEALTH_SCORE_CONFIG } from '../lib/rotation.js';
+
+describe('HealthScoreTracker', () => {
+  let tracker: HealthScoreTracker;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-30T12:00:00Z'));
+    tracker = new HealthScoreTracker();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  describe('recordRateLimit', () => {
+    it('decreases score by rateLimitDelta', () => {
+      tracker.recordRateLimit(0);
+      const expected = 
+        DEFAULT_HEALTH_SCORE_CONFIG.maxScore + 
+        DEFAULT_HEALTH_SCORE_CONFIG.rateLimitDelta;
+      expect(tracker.getScore(0)).toBe(expected);
+    });
+
+    it('increments consecutive failures', () => {
+      tracker.recordRateLimit(0);
+      expect(tracker.getConsecutiveFailures(0)).toBe(1);
+
+      tracker.recordRateLimit(0);
+      expect(tracker.getConsecutiveFailures(0)).toBe(2);
+    });
+  });
+});
+```
+
+### Storage Testing with Deduplication
+
+```typescript
+// test/storage.test.ts
+import { describe, it, expect } from 'vitest';
+import { normalizeAccountStorage, deduplicateAccounts } from '../lib/storage.js';
+
+describe('storage', () => {
+  describe('deduplication', () => {
+    it('deduplicates accounts by keeping the most recently used record', () => {
+      const now = Date.now();
+      const accounts = [
+        {
+          accountId: 'acctA',
+          refreshToken: 'tokenA',
+          addedAt: now - 2000,
+          lastUsed: now - 1000,
+        },
+        {
+          accountId: 'acctA',
+          refreshToken: 'tokenA',
+          addedAt: now - 1500,
+          lastUsed: now,  // Most recent
+        },
+      ];
+
+      const deduped = deduplicateAccounts(accounts);
+      expect(deduped).toHaveLength(1);
+      expect(deduped[0]?.lastUsed).toBe(now);
+    });
+
+    it('remaps activeIndex after deduplication', () => {
+      const raw = {
+        version: 1,
+        activeIndex: 1,
+        accounts: [
+          { accountId: 'acctA', /* ... */ },
+          { accountId: 'acctA', /* duplicate */ },
+          { accountId: 'acctB', /* ... */ },
+        ],
+      };
+
+      const normalized = normalizeAccountStorage(raw);
+      expect(normalized?.accounts).toHaveLength(2);
+      expect(normalized?.activeIndex).toBe(0);
+    });
+  });
+});
+```
+
+### Property-Based Testing
+
+```typescript
+// test/property/rotation.property.test.ts
+import { test } from '@fast-check/vitest';
+import { fc } from 'fast-check';
+import { selectHybridAccount } from '../../lib/rotation.js';
+
+test.prop([
+  fc.array(fc.record({
+    accountId: fc.string(),
+    email: fc.emailAddress(),
+    health: fc.integer({ min: 0, max: 100 }),
+  }), { minLength: 1, maxLength: 20 }),
+])('selectHybridAccount always returns a valid account index', (accounts) => {
+  const result = selectHybridAccount(accounts);
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThan(accounts.length);
+});
+```
+
+## Testing Best Practices
+
+### 1. Fake Timers for Deterministic Tests
+
+```typescript
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-01-30T12:00:00Z'));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+it('schedules retry after exponential backoff', () => {
+  const backoff = exponentialBackoff(3); // attempt 3
+  vi.advanceTimersByTime(backoff);
+  // Assert retry happened
+});
+```
+
+### 2. Windows Filesystem Safety
+
+**Problem**: Windows antivirus can lock files during cleanup, causing `EBUSY`/`EPERM` errors.
+
+**Solution**: Always use `removeWithRetry` in test cleanup:
+
+```typescript
+import { removeWithRetry } from './test-helpers.js';
+
+afterEach(async () => {
+  // WRONG: Direct fs.rm (fails on Windows)
+  // await fs.rm(tmpDir, { recursive: true });
+
+  // CORRECT: Retry with backoff
+  await removeWithRetry(tmpDir, { recursive: true });
+});
+```
+
+### 3. Mocking Network Requests
+
+```typescript
+import { vi } from 'vitest';
+
+it('handles 5xx server errors with account rotation', async () => {
+  const mockFetch = vi.fn().mockResolvedValueOnce({
+    ok: false,
+    status: 503,
+    statusText: 'Service Unavailable',
+  });
+
+  global.fetch = mockFetch;
+
+  // Test rotation logic triggers
+  await makeRequest();
+  
+  expect(mockFetch).toHaveBeenCalledTimes(1);
+  // Assert account health penalty applied
+});
+```
+
+### 4. Testing OAuth Server Integration
+
+```typescript
+// test/oauth-server.integration.test.ts
+import { startOAuthServer } from '../lib/auth/server.js';
+
+it('binds to port 1455 and handles callback', async () => {
+  const { server, promise } = await startOAuthServer({
+    state: 'test-state',
+    codeVerifier: 'test-verifier',
+  });
+
+  // Simulate OAuth callback
+  const response = await fetch(
+    'http://127.0.0.1:1455/auth/callback?code=abc123&state=test-state'
+  );
+
+  expect(response.status).toBe(200);
+  
+  const result = await promise;
+  expect(result.code).toBe('abc123');
+  
+  server.close();
+});
+```
+
+## Coverage Exclusions
+
+Certain files are excluded from coverage requirements:
+
+```typescript
+// vitest.config.ts
+coverage: {
+  exclude: [
+    'node_modules/',
+    'dist/',
+    'test/',
+    'eslint.config.js',
+    'index.ts',              // Plugin entry point (integration tested)
+    'lib/codex-manager.ts',  // CLI dispatcher
+    'lib/ui/**',             // Terminal UI (hard to test)
+    'lib/tools/**',          // Tool helpers
+    'scripts/**',            // Build/hygiene scripts
+  ],
+}
+```
+
+## Continuous Integration
+
+### CI Test Gate
+
+```bash
+# Run in CI (GitHub Actions)
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run clean:repo:check  # Validate no committed artifacts
+npm run audit:ci          # Security audit
+```
+
+### Security Audits
+
+```bash
+# Production dependencies only (high severity+)
+npm run audit:prod
+
+# All dependencies including dev (high severity+)
+npm run audit:all
+
+# Dev dependencies with allowlist
+npm run audit:dev:allowlist
+```
+
+## Chaos and Fault Injection
+
+```typescript
+// test/chaos/fault-injection.test.ts
+import { injectFault, FaultType } from '../lib/testing/fault-injector.js';
+
+describe('Chaos Testing', () => {
+  it('recovers from network timeout during token refresh', async () => {
+    injectFault(FaultType.NETWORK_TIMEOUT, { duration: 5000 });
+    
+    const result = await refreshAccessToken('refresh-token');
+    
+    // Should fail gracefully and trigger account rotation
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('timeout');
+  });
+});
+```
+
+## Test File Organization
+
+```
+test/
+├── *.test.ts              # Unit tests mirroring lib/ structure
+├── property/              # Property-based tests (fast-check)
+│   ├── setup.ts           # Property test configuration
+│   └── *.property.test.ts # Randomized invariant tests
+├── chaos/                 # Fault injection tests
+│   └── fault-injection.test.ts
+└── fixtures/              # Test data
+    └── v3-storage.json    # Storage format fixtures
+```
+
+## Debugging Tests
+
+### Run Single Test File
+
+```bash
+vitest run test/auth.test.ts
+```
+
+### Run Specific Test
+
+```bash
+vitest run -t "should parse full OAuth callback URL"
+```
+
+### Enable Debug Logging
+
+```bash
+ENABLE_PLUGIN_REQUEST_LOGGING=1 npm test
+CODEX_PLUGIN_LOG_BODIES=1 npm test  # Include request/response bodies
+```
+
+<Warning>
+`CODEX_PLUGIN_LOG_BODIES=1` may log sensitive data. Only use during local troubleshooting.
+</Warning>
+
+## Related Documentation
+
+- [Contributing Guidelines](/advanced/contributing) - Development setup and PR process
+- [Security Practices](/advanced/security) - Security testing and vulnerability reporting
+- [Architecture Overview](/advanced/architecture-overview) - System design and component interaction

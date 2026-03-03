@@ -1,0 +1,316 @@
+---
+title: "Architecture Overview"
+description: "High-level architecture and component overview of Codex Multi-Auth request flow"
+---
+
+# Architecture Overview
+
+Codex Multi-Auth is a plugin that intercepts OpenAI SDK calls and routes them through ChatGPT's Codex backend with OAuth authentication and intelligent multi-account rotation.
+
+## System Architecture
+
+```
+Plugin Host (Codex CLI / AI SDK)
+  |
+  | OpenAI SDK call (generateText/streamText)
+  v
+index.ts: OpenAIOAuthPlugin
+  |
+  +-- 1. Load account pool from disk
+  |     (AccountManager.loadFromDisk)
+  |
+  +-- 2. Select best account
+  |     (health scoring + session affinity + quota awareness)
+  |
+  +-- 3. Transform request
+  |     (7-step pipeline, see Request Pipeline)
+  |
+  +-- 4. Execute with failover
+  |     (circuit breaker + retry logic + stream failover)
+  |
+  +-- 5. Update account state
+  |     (cooldowns, rate limits, health scores)
+  |
+  +-- 6. Persist changes
+  |     (atomic writes with backup/WAL)
+  v
+ChatGPT Codex API (https://api.openai.com/v1/realtime/...)
+```
+
+## Core Subsystems
+
+### 1. Authentication (`lib/auth/`)
+
+**Purpose**: OAuth 2.0 + PKCE flow for ChatGPT account authentication
+
+**Key Files**:
+- `auth.ts`: Token exchange, refresh, JWT decoding
+- `server.ts`: Local callback server (port 1455)
+- `browser.ts`: Platform-specific browser launch
+
+**Flow**:
+```typescript
+// 1. Generate PKCE challenge + state
+const { pkce, state, url } = await createAuthorizationFlow();
+
+// 2. Start local server + open browser
+const server = await startLocalOAuthServer({ state });
+openBrowserUrl(url);
+
+// 3. Receive callback with authorization code
+const { code } = await server.waitForCode(state);
+
+// 4. Exchange code for tokens
+const tokens = await exchangeAuthorizationCode(code, pkce.verifier, REDIRECT_URI);
+// Result: { access, refresh, expires, idToken }
+```
+
+**Constants** (source/lib/auth/auth.ts:8-12):
+```typescript
+export const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+export const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
+export const TOKEN_URL = "https://auth.openai.com/oauth/token";
+export const REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
+export const SCOPE = "openid profile email offline_access";
+```
+
+### 2. Account Management (`lib/accounts.ts`)
+
+**Purpose**: Multi-account pool with health scoring, cooldowns, and rotation logic
+
+**Selection Algorithm**:
+1. Filter out accounts in cooldown
+2. Filter out accounts with active rate limits
+3. Apply session affinity (prefer same account for same thread)
+4. Score by health (0-100) + quota availability
+5. Apply PID offset for fair rotation
+6. Select highest-scoring account
+
+**Health Scoring**:
+- Starts at 100
+- Decrements on failures (network, server, auth)
+- Resets to 100 on success
+- Accounts below threshold get cooldown
+
+### 3. Storage (`lib/storage.ts`)
+
+**Purpose**: V3 JSON storage with per-project/global scoping and worktree resolution
+
+**Storage Paths**:
+```
+~/.codex/multi-auth/
+├── settings.json                    # Plugin + dashboard config
+├── openai-codex-accounts.json       # Global account pool (V3)
+├── openai-codex-accounts.json.bak   # Backup
+├── openai-codex-accounts.json.wal   # Write-ahead log
+├── quota-cache.json                 # Cached quota snapshots
+├── logs/                            # Plugin logs
+└── projects/<project-key>/          # Per-project account pools
+    └── openai-codex-accounts.json
+```
+
+**V3 Storage Format** (source/lib/storage.ts:137):
+```typescript
+interface AccountStorageV3 {
+  version: 3;
+  accounts: Account[];
+  activeIndex: number;
+  activeIndexByFamily?: Partial<Record<ModelFamily, number>>;
+}
+
+interface Account {
+  accountId?: string;
+  accountIdSource?: "token" | "manual" | "org";
+  email?: string;
+  refreshToken: string;
+  accessToken: string;
+  expiresAt: number;
+  addedAt: number;
+  lastUsed: number;
+  healthScore?: number;
+  cooldownUntil?: number;
+  cooldownReason?: CooldownReason;
+  rateLimitResetTimes?: Record<string, number>;
+  consecutiveAuthFailures?: number;
+}
+```
+
+### 4. Request Pipeline (`lib/request/`)
+
+See [Request Pipeline](/advanced/request-pipeline) for detailed 7-step flow.
+
+**Key Transformations**:
+- Model normalization (e.g., `gpt-5.3-codex` → `gpt-5-codex`)
+- Inject Codex system instructions (model-family specific)
+- Enforce `stream: true`, `store: false`
+- Add `reasoning.encrypted_content` to `include`
+- Filter orphaned tool outputs
+- Apply fast-session optimizations
+
+### 5. Failure Handling (`lib/request/failure-policy.ts`)
+
+See [Failure Handling](/advanced/failure-handling) for circuit breaker and retry details.
+
+**Failure Types**:
+- **auth-refresh**: Rotate account + cooldown, remove after 3 consecutive failures
+- **network**: Rotate + refund token + cooldown (6s default)
+- **server**: Rotate + refund token + cooldown (4s or retry-after)
+- **rate-limit**: Rotate + mark rate-limited (no cooldown, use reset time)
+- **empty-response**: Retry same account or rotate (failover-mode dependent)
+
+### 6. Circuit Breaker (`lib/circuit-breaker.ts`)
+
+**Purpose**: Isolate failing accounts to prevent cascade failures
+
+**States**:
+- **Closed**: Normal operation
+- **Open**: Account blocked (threshold reached)
+- **Half-Open**: Testing recovery (limited attempts)
+
+**Default Config**:
+```typescript
+{
+  failureThreshold: 3,        // Open after 3 failures in window
+  failureWindowMs: 60_000,    // 60s sliding window
+  resetTimeoutMs: 30_000,     // 30s before half-open
+  halfOpenMaxAttempts: 1      // 1 test request in half-open
+}
+```
+
+## Runtime Features
+
+### Session Affinity (`lib/session-affinity.ts`)
+
+Prefers the same account for the same conversation thread to maintain reasoning continuity.
+
+```typescript
+const sessionAffinityStore = new SessionAffinityStore({
+  ttlMs: 30 * 60 * 1000,  // 30 minutes
+  maxEntries: 1000
+});
+
+// On request
+const preferredIndex = sessionAffinityStore.getPreferredAccountIndex(threadId);
+
+// On successful response
+sessionAffinityStore.recordAffinity(threadId, accountIndex);
+```
+
+### Live Account Sync (`lib/live-account-sync.ts`)
+
+Watches account storage file for changes and reloads without restart.
+
+```typescript
+const liveSync = new LiveAccountSync(
+  async () => await reloadAccountManagerFromDisk(),
+  { debounceMs: 1000, pollIntervalMs: 2000 }
+);
+await liveSync.syncToPath(storagePath);
+```
+
+### Proactive Refresh (`lib/refresh-guardian.ts`)
+
+Refreshes tokens before expiry to avoid auth delays during requests.
+
+```typescript
+const guardian = new RefreshGuardian(
+  () => cachedAccountManager,
+  { intervalMs: 60_000, bufferMs: 5 * 60 * 1000 }
+);
+guardian.start();
+```
+
+### Preemptive Quota Scheduler (`lib/preemptive-quota-scheduler.ts`)
+
+Defers requests when quota is low to avoid hitting hard limits.
+
+```typescript
+const scheduler = new PreemptiveQuotaScheduler();
+scheduler.configure({
+  enabled: true,
+  remainingPercentThresholdPrimary: 10,   // 5h window
+  remainingPercentThresholdSecondary: 5,  // 7d window
+  maxDeferralMs: 10 * 60 * 1000          // 10 minutes max
+});
+
+const deferralMs = scheduler.shouldDeferRequest(accountIndex, modelFamily);
+if (deferralMs > 0) {
+  await sleep(deferralMs);
+}
+```
+
+## Configuration Sources
+
+Priority order (highest to lowest):
+
+1. **Environment variables**: `CODEX_MODE`, `CODEX_AUTH_*`
+2. **Plugin config** (`~/.codex/multi-auth/settings.json`)
+3. **Runtime model config** (passed to plugin loader)
+4. **Defaults** (see `lib/config.ts`)
+
+**Key Settings**:
+```typescript
+// Account selection
+getPerProjectAccounts()           // Per-project vs global storage
+getSessionAffinity()              // Enable session affinity
+
+// Resilience
+getNetworkErrorCooldownMs()       // Default 6000ms
+getServerErrorCooldownMs()        // Default 4000ms
+getRetryAllAccountsMaxRetries()   // Default 3
+
+// Fast session
+getFastSession()                  // Low-latency mode
+getFastSessionStrategy()          // "hybrid" | "always"
+getFastSessionMaxInputItems()     // Default 30
+
+// Token refresh
+getTokenRefreshSkewMs()           // Refresh buffer (default 5min)
+getProactiveRefreshGuardian()     // Background refresh
+
+// Stream failover
+getStreamStallTimeoutMs()         // SSE stall timeout (default 45s)
+```
+
+## Error Observability
+
+**Logging Stages** (source/lib/constants.ts:31):
+```typescript
+export const LOG_STAGES = {
+  BEFORE_TRANSFORM: "before_transform",
+  AFTER_TRANSFORM: "after_transform",
+  ERROR_RESPONSE: "error_response",
+  SUCCESS_RESPONSE: "success_response",
+} as const;
+```
+
+**Request Correlation**:
+```typescript
+const correlationId = setCorrelationId(
+  threadId ? `${threadId}:${Date.now()}` : undefined
+);
+// All logs for this request tagged with correlationId
+clearCorrelationId();
+```
+
+**Runtime Metrics** (source/index.ts:296):
+```typescript
+interface RuntimeMetrics {
+  totalRequests: number;
+  successfulRequests: number;
+  failedRequests: number;
+  rateLimitedResponses: number;
+  serverErrors: number;
+  networkErrors: number;
+  accountRotations: number;
+  streamFailoverAttempts: number;
+  streamFailoverRecoveries: number;
+  cumulativeLatencyMs: number;
+}
+```
+
+## Related Documentation
+
+- [OAuth Flow](/advanced/oauth-flow) - OAuth 2.0 + PKCE implementation
+- [Request Pipeline](/advanced/request-pipeline) - 7-step transformation flow
+- [Failure Handling](/advanced/failure-handling) - Circuit breaker and retry logic

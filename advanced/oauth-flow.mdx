@@ -1,0 +1,539 @@
+---
+title: "OAuth 2.0 + PKCE Flow"
+description: "OAuth 2.0 implementation with PKCE for ChatGPT account authentication"
+---
+
+# OAuth 2.0 + PKCE Flow
+
+Codex Multi-Auth uses the standard OAuth 2.0 Authorization Code flow with PKCE (Proof Key for Code Exchange) to authenticate with ChatGPT accounts.
+
+## OAuth Endpoints
+
+From `lib/auth/auth.ts:8-12`:
+
+```typescript
+export const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+export const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
+export const TOKEN_URL = "https://auth.openai.com/oauth/token";
+export const REDIRECT_URI = "http://127.0.0.1:1455/auth/callback";
+export const SCOPE = "openid profile email offline_access";
+```
+
+**Note**: The `CLIENT_ID` is the same one used by the official OpenAI Codex CLI.
+
+## Complete OAuth Flow
+
+```
+┌─────────────┐                                      ┌──────────────┐
+│   User      │                                      │  auth.openai │
+│  (Browser)  │                                      │     .com     │
+└──────┬──────┘                                      └──────┬───────┘
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 1. Generate PKCE + State             │         │
+       │  │    - code_verifier (random 128 bytes)│         │
+       │  │    - code_challenge (SHA256 hash)    │         │
+       │  │    - state (random 32 bytes)         │         │
+       │  └──────────────────────────────────────┘         │
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 2. Start local callback server       │         │
+       │  │    - Bind to 127.0.0.1:1455          │         │
+       │  │    - Wait for OAuth callback         │         │
+       │  └──────────────────────────────────────┘         │
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 3. Build authorization URL           │         │
+       │  │    + response_type=code              │         │
+       │  │    + client_id                       │         │
+       │  │    + redirect_uri                    │         │
+       │  │    + scope                           │         │
+       │  │    + code_challenge                  │         │
+       │  │    + code_challenge_method=S256      │         │
+       │  │    + state                           │         │
+       │  │    + id_token_add_organizations=true │         │
+       │  └──────────────────────────────────────┘         │
+       │                                                    │
+       │                 Open browser                       │
+       ├───────────────────────────────────────────────────>│
+       │                                                    │
+       │          Display login / consent screen           │
+       │<───────────────────────────────────────────────────┤
+       │                                                    │
+       │              User authenticates                    │
+       ├───────────────────────────────────────────────────>│
+       │                                                    │
+       │     Redirect to http://127.0.0.1:1455/auth/callback│
+       │           ?code=AUTH_CODE&state=STATE              │
+       │<───────────────────────────────────────────────────┤
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 4. Local server receives callback    │         │
+       │  │    - Validate state matches          │         │
+       │  │    - Extract authorization code      │         │
+       │  │    - Close server                    │         │
+       │  └──────────────────────────────────────┘         │
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 5. Exchange code for tokens          │         │
+       │  │    POST /oauth/token                 │─────────>│
+       │  │    + grant_type=authorization_code   │         │
+       │  │    + client_id                       │         │
+       │  │    + code                            │         │
+       │  │    + code_verifier                   │         │
+       │  │    + redirect_uri                    │         │
+       │  └──────────────────────────────────────┘         │
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 6. Receive tokens                    │<────────┤
+       │  │    - access_token                    │         │
+       │  │    - refresh_token                   │         │
+       │  │    - id_token (JWT)                  │         │
+       │  │    - expires_in (seconds)            │         │
+       │  └──────────────────────────────────────┘         │
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 7. Decode JWT & extract account ID   │         │
+       │  │    - Parse id_token payload          │         │
+       │  │    - Extract user.id / org.id        │         │
+       │  │    - Extract email                   │         │
+       │  └──────────────────────────────────────┘         │
+       │                                                    │
+       │  ┌──────────────────────────────────────┐         │
+       │  │ 8. Persist to account pool           │         │
+       │  │    - Save refresh_token              │         │
+       │  │    - Save access_token               │         │
+       │  │    - Calculate expires_at            │         │
+       │  │    - Store account metadata          │         │
+       │  └──────────────────────────────────────┘         │
+```
+
+## PKCE (Proof Key for Code Exchange)
+
+PKCE prevents authorization code interception attacks by requiring the client to prove it initiated the flow.
+
+### PKCE Generation
+
+From `lib/auth/auth.ts:220`:
+
+```typescript
+export async function createAuthorizationFlow(
+  options?: AuthorizationFlowOptions
+): Promise<AuthorizationFlow> {
+  // 1. Generate PKCE pair
+  const pkce = (await generatePKCE()) as PKCEPair;
+  // Result: { verifier: "random-128-byte-string", challenge: "base64-sha256" }
+
+  // 2. Generate state (CSRF protection)
+  const state = createState(); // 32 random bytes
+
+  // 3. Build authorization URL
+  const url = new URL(AUTHORIZE_URL);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", CLIENT_ID);
+  url.searchParams.set("redirect_uri", REDIRECT_URI);
+  url.searchParams.set("scope", SCOPE);
+  url.searchParams.set("code_challenge", pkce.challenge);       // SHA256 hash
+  url.searchParams.set("code_challenge_method", "S256");        // SHA256
+  url.searchParams.set("state", state);
+  url.searchParams.set("id_token_add_organizations", "true");   // Include org info
+  url.searchParams.set("codex_cli_simplified_flow", "true");    // Codex CLI flag
+  url.searchParams.set("originator", "codex_cli_rs");           // Originator tag
+
+  // Optional: Force new login (for adding multiple accounts)
+  if (options?.forceNewLogin) {
+    url.searchParams.set("prompt", "login");
+  }
+
+  return { pkce, state, url: url.toString() };
+}
+```
+
+**PKCE Benefits**:
+- Prevents authorization code interception
+- No client secret required (safe for CLI apps)
+- Industry standard (RFC 7636)
+
+## Token Exchange
+
+From `lib/auth/auth.ts:97`:
+
+```typescript
+export async function exchangeAuthorizationCode(
+  code: string,
+  verifier: string,
+  redirectUri: string = REDIRECT_URI,
+): Promise<TokenResult> {
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      client_id: CLIENT_ID,
+      code,                      // Authorization code from callback
+      code_verifier: verifier,   // PKCE verifier (proves we generated challenge)
+      redirect_uri: redirectUri,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return {
+      type: "failed",
+      reason: "http_error",
+      statusCode: res.status,
+      message: text || undefined,
+    };
+  }
+
+  const json = await res.json();
+  return {
+    type: "success",
+    access: json.access_token,
+    refresh: json.refresh_token ?? "",
+    expires: Date.now() + json.expires_in * 1000,
+    idToken: json.id_token,
+    multiAccount: true,
+  };
+}
+```
+
+## Token Refresh
+
+Tokens typically expire after 1 hour. Refresh tokens are used to obtain new access tokens without re-authenticating.
+
+From `lib/auth/auth.ts:161`:
+
+```typescript
+export async function refreshAccessToken(
+  refreshToken: string
+): Promise<TokenResult> {
+  const response = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: refreshToken,
+      client_id: CLIENT_ID,
+    }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => "");
+    return {
+      type: "failed",
+      reason: "http_error",
+      statusCode: response.status,
+      message: text || undefined,
+    };
+  }
+
+  const json = await response.json();
+  const nextRefresh = json.refresh_token ?? refreshToken;
+
+  return {
+    type: "success",
+    access: json.access_token,
+    refresh: nextRefresh,              // May rotate
+    expires: Date.now() + json.expires_in * 1000,
+    idToken: json.id_token,
+    multiAccount: true,
+  };
+}
+```
+
+**Refresh Token Rotation**: OpenAI may return a new refresh token. Always use the latest refresh token for subsequent refreshes.
+
+### Queued Refresh (Race Prevention)
+
+From `lib/refresh-queue.ts`:
+
+```typescript
+// Multiple concurrent requests may trigger refresh simultaneously.
+// Queue ensures only one refresh executes, others wait for result.
+
+const refreshQueue = new Map<string, Promise<TokenResult>>();
+
+export async function queuedRefresh(refreshToken: string): Promise<TokenResult> {
+  // Check if refresh already in progress
+  let existing = refreshQueue.get(refreshToken);
+  if (existing) {
+    return existing; // Wait for in-flight refresh
+  }
+
+  // Start new refresh
+  const promise = (async () => {
+    try {
+      return await refreshAccessToken(refreshToken);
+    } finally {
+      refreshQueue.delete(refreshToken);
+    }
+  })();
+
+  refreshQueue.set(refreshToken, promise);
+  return promise;
+}
+```
+
+**Benefits**:
+- Prevents multiple simultaneous refresh requests
+- Reduces API load
+- Avoids token rotation conflicts
+
+## JWT Decoding
+
+The `id_token` is a JWT containing user and organization information.
+
+From `lib/auth/auth.ts:139`:
+
+```typescript
+export function decodeJWT(token: string): JWTPayload | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+
+    const payload = parts[1] ?? "";
+    // Base64url decode
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(
+      normalized.length + ((4 - (normalized.length % 4)) % 4),
+      "=",
+    );
+    const decoded = Buffer.from(padded, "base64").toString("utf-8");
+    return JSON.parse(decoded) as JWTPayload;
+  } catch {
+    return null;
+  }
+}
+```
+
+**JWT Payload Structure**:
+```json
+{
+  "https://api.openai.com/profile": {
+    "email": "user@example.com",
+    "email_verified": true
+  },
+  "https://api.openai.com/auth": {
+    "user_id": "user-abc123",
+    "organizations": [
+      {
+        "id": "org-xyz789",
+        "role": "owner"
+      }
+    ]
+  },
+  "iss": "https://auth.openai.com/",
+  "sub": "user-abc123",
+  "aud": "app_EMoamEEZ73f0CkXaXp7hrann",
+  "exp": 1234567890,
+  "iat": 1234567890
+}
+```
+
+## Account ID Extraction
+
+From `lib/accounts.ts:350`:
+
+```typescript
+export function extractAccountId(accessToken: string): string | undefined {
+  const payload = decodeJWT(accessToken);
+  if (!payload) return undefined;
+
+  const auth = payload["https://api.openai.com/auth"];
+  if (!auth || typeof auth !== "object") return undefined;
+
+  // Priority: org ID > user ID
+  const organizations = (auth as { organizations?: unknown }).organizations;
+  if (Array.isArray(organizations) && organizations.length > 0) {
+    const org = organizations[0];
+    if (org && typeof org === "object") {
+      const orgId = (org as { id?: unknown }).id;
+      if (typeof orgId === "string" && orgId.startsWith("org-")) {
+        return orgId; // Organization account
+      }
+    }
+  }
+
+  // Fallback: user ID
+  const userId = (auth as { user_id?: unknown }).user_id;
+  if (typeof userId === "string" && userId.startsWith("user-")) {
+    return userId; // Personal account
+  }
+
+  return undefined;
+}
+```
+
+**Account ID Priority**:
+1. **Organization ID** (`org-*`): Used for workspace/team accounts
+2. **User ID** (`user-*`): Used for personal accounts
+
+This ensures workspace accounts use organization quotas instead of personal quotas.
+
+## Token Refresh Strategy
+
+### 1. On-Demand Refresh (Request-Time)
+
+From `index.ts:1014`:
+
+```typescript
+if (shouldRefreshToken(auth, tokenRefreshSkewMs)) {
+  auth = await refreshAndUpdateToken(auth, client);
+}
+```
+
+**Refresh if**:
+```typescript
+export function shouldRefreshToken(auth: Auth, skewMs = 0): boolean {
+  if (auth.type !== "oauth") return true;
+  if (!auth.access) return true;
+  return auth.expires <= Date.now() + skewMs; // Default skewMs: 5 minutes
+}
+```
+
+### 2. Proactive Refresh (Background)
+
+From `lib/refresh-guardian.ts`:
+
+```typescript
+class RefreshGuardian {
+  start() {
+    this.timer = setInterval(async () => {
+      const manager = this.getAccountManager();
+      if (!manager) return;
+
+      const now = Date.now();
+      for (const account of manager.getAccounts()) {
+        if (account.expiresAt <= now + this.bufferMs) {
+          // Refresh if expiring within buffer window (default 5 minutes)
+          const result = await queuedRefresh(account.refreshToken);
+          if (result.type === "success") {
+            manager.updateAccountTokens(account, result);
+          }
+        }
+      }
+    }, this.intervalMs); // Default 60s
+  }
+}
+```
+
+**Benefits**:
+- Reduces request-time latency (no waiting for refresh)
+- Prevents auth failures during high-volume usage
+- Automatic background maintenance
+
+## OAuth Callback Server
+
+From `lib/auth/server.ts`:
+
+```typescript
+export async function startLocalOAuthServer(options: {
+  state: string;
+}): Promise<{
+  ready: boolean;
+  close: () => void;
+  waitForCode: (expectedState: string) => Promise<{ code: string } | null>;
+}> {
+  let resolver: ((value: { code: string } | null) => void) | null = null;
+  const codePromise = new Promise<{ code: string } | null>((resolve) => {
+    resolver = resolve;
+  });
+
+  const server = http.createServer((req, res) => {
+    const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
+    
+    if (url.pathname === "/auth/callback") {
+      const code = url.searchParams.get("code");
+      const state = url.searchParams.get("state");
+
+      if (code && state === options.state) {
+        // Success response
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(OAUTH_SUCCESS_HTML); // Display success page
+        resolver?.({ code });
+      } else {
+        // Error response
+        res.writeHead(400, { "Content-Type": "text/plain" });
+        res.end("Invalid callback parameters");
+        resolver?.(null);
+      }
+    }
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    server.listen(1455, "127.0.0.1", () => resolve());
+    server.on("error", reject);
+  });
+
+  return {
+    ready: true,
+    close: () => server.close(),
+    waitForCode: async () => codePromise,
+  };
+}
+```
+
+**Port 1455**: Hardcoded to match `REDIRECT_URI`. Conflicts prevented by checking server bind success.
+
+## Manual OAuth Flow (Fallback)
+
+If the local server fails to start, users can manually paste the callback URL.
+
+From `index.ts:390`:
+
+```typescript
+const buildManualOAuthFlow = (
+  pkce: { verifier: string },
+  url: string,
+  expectedState: string,
+) => ({
+  url,
+  method: "code" as const,
+  instructions: "Paste the full callback URL after authorizing",
+  validate: (input: string): string | undefined => {
+    const parsed = parseAuthorizationInput(input);
+    if (!parsed.code) {
+      return "No authorization code found";
+    }
+    if (parsed.state !== expectedState) {
+      return "OAuth state mismatch";
+    }
+    return undefined; // Valid
+  },
+  callback: async (input: string) => {
+    const parsed = parseAuthorizationInput(input);
+    return await exchangeAuthorizationCode(
+      parsed.code!,
+      pkce.verifier,
+      REDIRECT_URI,
+    );
+  },
+});
+```
+
+**Input Parsing** (from `lib/auth/auth.ts:52`):
+```typescript
+export function parseAuthorizationInput(input: string): ParsedAuthInput {
+  // Supports multiple formats:
+  // 1. Full URL: http://127.0.0.1:1455/auth/callback?code=...&state=...
+  // 2. URL with hash: http://...#code=...&state=...
+  // 3. code#state format: abc123#xyz789
+  // 4. Query params: code=abc123&state=xyz789
+  // 5. Just code: abc123
+}
+```
+
+## Security Considerations
+
+1. **PKCE**: Prevents authorization code interception
+2. **State parameter**: CSRF protection
+3. **Local server**: Binds to `127.0.0.1` only (not `0.0.0.0`)
+4. **Token redaction**: Tokens never logged in plaintext
+5. **Secure storage**: Account pool encrypted at rest (OS keychain integration planned)
+
+## Related Documentation
+
+- [Architecture Overview](/advanced/architecture-overview)
+- [Request Pipeline](/advanced/request-pipeline)
+- [Failure Handling](/advanced/failure-handling)

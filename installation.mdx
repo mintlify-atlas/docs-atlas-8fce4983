@@ -1,0 +1,214 @@
+---
+title: Installation
+description: Install Codex Multi-Auth globally and verify command wiring
+---
+
+## Prerequisites
+
+Before installing Codex Multi-Auth, ensure you have:
+
+- **Node.js 18+** - Check your version with `node --version`
+- **Active ChatGPT plan** - With access to the models you intend to use
+- **Official Codex CLI** - The `@openai/codex` package (installed in the next step)
+
+## Standard installation
+
+<Steps>
+  <Step title="Install the official Codex CLI">
+    First, install the official `@openai/codex` package globally:
+
+    <CodeGroup>
+      ```bash npm
+      npm i -g @openai/codex
+      ```
+
+      ```bash yarn
+      yarn global add @openai/codex
+      ```
+
+      ```bash pnpm
+      pnpm add -g @openai/codex
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install Codex Multi-Auth">
+    Next, install the `codex-multi-auth` package globally:
+
+    <CodeGroup>
+      ```bash npm
+      npm i -g codex-multi-auth
+      ```
+
+      ```bash yarn
+      yarn global add codex-multi-auth
+      ```
+
+      ```bash pnpm
+      pnpm add -g codex-multi-auth
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Verify installation">
+    Confirm that the `codex` command is available and wired correctly:
+
+    ```bash
+    codex --version
+    ```
+
+    Then verify the auth plugin is loaded:
+
+    ```bash
+    codex auth status
+    ```
+
+    You should see output indicating the plugin is active, even if no accounts are configured yet.
+  </Step>
+</Steps>
+
+## Migrate from legacy package
+
+If you previously installed the scoped prerelease package `@ndycode/codex-multi-auth`, follow these steps:
+
+<Steps>
+  <Step title="Uninstall the legacy package">
+    Remove the old scoped package:
+
+    <CodeGroup>
+      ```bash npm
+      npm uninstall -g @ndycode/codex-multi-auth
+      ```
+
+      ```bash yarn
+      yarn global remove @ndycode/codex-multi-auth
+      ```
+
+      ```bash pnpm
+      pnpm remove -g @ndycode/codex-multi-auth
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install the new package">
+    Install the current `codex-multi-auth` package:
+
+    <CodeGroup>
+      ```bash npm
+      npm i -g codex-multi-auth
+      ```
+
+      ```bash yarn
+      yarn global add codex-multi-auth
+      ```
+
+      ```bash pnpm
+      pnpm add -g codex-multi-auth
+      ```
+    </CodeGroup>
+
+    <Note>
+      Your existing account data and settings will be preserved automatically. The migration is seamless.
+    </Note>
+  </Step>
+
+  <Step title="Verify migration">
+    Confirm your accounts are still accessible:
+
+    ```bash
+    codex auth list
+    codex auth check
+    ```
+  </Step>
+</Steps>
+
+## Verification checklist
+
+After installation, verify your setup with these commands:
+
+```bash
+# Confirm Codex CLI version
+codex --version
+
+# Check auth plugin status
+codex auth status
+
+# List configured accounts (may be empty on first install)
+codex auth list
+
+# Test health check command
+codex auth check
+```
+
+<Warning>
+  If `codex auth` is not recognized, try using the compatibility alias `codex multi auth status` or check your global npm installation path.
+</Warning>
+
+## Troubleshooting installation
+
+### Command not found
+
+If you see "command not found" errors after installation:
+
+1. **Check your global npm path**
+   ```bash
+   npm config get prefix
+   ```
+   Ensure this directory is in your `PATH` environment variable.
+
+2. **Try alternative command formats**
+   ```bash
+   codex multi auth status
+   codex multi-auth status
+   codex multiauth status
+   ```
+
+3. **Find the Codex binary location**
+   ```bash
+   # On Unix/macOS
+   which codex
+
+   # On Windows
+   where codex
+   ```
+
+### Permission errors
+
+If you encounter EACCES permission errors on Unix/macOS:
+
+```bash
+# Option 1: Use a Node version manager (recommended)
+nvm use 18  # or your preferred version
+
+# Option 2: Fix npm permissions
+mkdir ~/.npm-global
+npm config set prefix '~/.npm-global'
+echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+source ~/.bashrc
+```
+
+### OAuth callback port conflict
+
+The OAuth flow uses port `1455` by default. If you see port binding errors:
+
+1. Find and stop the process using port `1455`:
+   ```bash
+   # On Unix/macOS
+   lsof -ti:1455 | xargs kill
+
+   # On Windows
+   netstat -ano | findstr :1455
+   ```
+
+2. Retry the installation or login flow
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Add your first account and run health checks
+  </Card>
+  <Card title="Configuration" icon="gear" href="/configuration">
+    Customize settings and environment variables
+  </Card>
+</CardGroup>

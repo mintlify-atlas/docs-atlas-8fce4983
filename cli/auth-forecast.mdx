@@ -1,0 +1,343 @@
+---
+title: codex auth forecast
+description: Forecast the best account to use based on health, quota, and risk scoring
+---
+
+Analyze all accounts and recommend the best one for your next API session based on health scores, quota availability, rate limits, and risk factors.
+
+## Usage
+
+```bash
+codex auth forecast [--live] [--json] [--model <model>]
+```
+
+<ParamField path="--live" type="boolean" default="false">
+  Perform live quota probes for all accounts before scoring.
+</ParamField>
+
+<ParamField path="--json" type="boolean" default="false">
+  Output machine-readable JSON instead of human-friendly text.
+</ParamField>
+
+<ParamField path="--model" type="string" default="gpt-5-codex">
+  Model to use for live quota probes (only with `--live`).
+</ParamField>
+
+## How It Works
+
+1. **Load accounts** - Read all enabled accounts from storage
+2. **Score health** - Calculate health score (0-100) per account
+3. **Check rate limits** - Factor in cooldown timers
+4. **Probe quota** (if `--live`) - Fetch real-time usage
+5. **Evaluate risk** - Low/medium/high risk per account
+6. **Rank accounts** - Sort by readiness and risk
+7. **Recommend best** - Output top choice with reasoning
+
+## Example Output
+
+### Default Mode (No Live Probe)
+
+```
+Forecast (4 accounts evaluated)
+
+Recommended account:
+  → alice@example.com (index 1)
+  Reason: Ready, low risk, health 100
+
+All accounts:
+  1. alice@example.com      Ready     Low risk      Health: 100
+  2. bob@work.com           Ready     Medium risk   Health: 85
+  3. carol@personal.com     Delayed   Medium risk   Health: 70
+  4. dave@test.com          Blocked   High risk     Health: 20
+```
+
+### Live Mode
+
+```
+Forecast (4 accounts evaluated with live probe)
+
+Recommended account:
+  → alice@example.com (index 1)
+  Reason: Ready, low risk, health 100, quota 5h:95% 7d:87%
+
+All accounts:
+  1. alice@example.com      Ready     Low risk      5h:95% 7d:87%  Health: 100
+  2. bob@work.com           Ready     Medium risk   5h:45% 7d:67%  Health: 85
+  3. carol@personal.com     Delayed   Medium risk   5h:12% 7d:34%  Health: 70
+  4. dave@test.com          Blocked   High risk     rate-limited   Health: 20
+```
+
+## JSON Output
+
+```bash
+codex auth forecast --live --json
+```
+
+```json
+{
+  "evaluatedAt": 1709337600000,
+  "totalAccounts": 4,
+  "liveProbe": true,
+  "model": "gpt-5-codex",
+  "recommendation": {
+    "index": 0,
+    "accountId": "user-abc123",
+    "email": "alice@example.com",
+    "availability": "ready",
+    "riskLevel": "low",
+    "healthScore": 100,
+    "quota5h": 95,
+    "quota7d": 87,
+    "reasoning": "Ready, low risk, health 100, quota 5h:95% 7d:87%"
+  },
+  "accounts": [
+    {
+      "index": 0,
+      "email": "alice@example.com",
+      "availability": "ready",
+      "riskLevel": "low",
+      "healthScore": 100,
+      "quota5h": 95,
+      "quota7d": 87
+    },
+    {
+      "index": 1,
+      "email": "bob@work.com",
+      "availability": "ready",
+      "riskLevel": "medium",
+      "healthScore": 85,
+      "quota5h": 45,
+      "quota7d": 67
+    }
+  ]
+}
+```
+
+## Availability States
+
+<ParamField path="ready" type="availability">
+  Account is immediately available for use.
+</ParamField>
+
+<ParamField path="delayed" type="availability">
+  Account is usable but may have delays (low quota, cooldown ending soon).
+</ParamField>
+
+<ParamField path="blocked" type="availability">
+  Account is unavailable (rate-limited, disabled, or broken).
+</ParamField>
+
+## Risk Levels
+
+<ParamField path="low" type="risk">
+  Healthy account with high quota, no recent failures.
+</ParamField>
+
+<ParamField path="medium" type="risk">
+  Account with moderate quota or minor issues (expired token but refresh works).
+</ParamField>
+
+<ParamField path="high" type="risk">
+  Account with low quota, recent failures, or impending issues (broken refresh token).
+</ParamField>
+
+## Scoring Factors
+
+### Health Score (0-100)
+
+- **100** - Never failed, always refreshes successfully
+- **80-99** - Occasional refresh failures (1-2)
+- **50-79** - Multiple failures or warnings
+- **0-49** - Consistent failures, near flagging threshold
+
+### Quota Impact (Live Probe Only)
+
+- **5h window** - Short-term burst capacity (weight: 60%)
+- **7d window** - Long-term sustained usage (weight: 40%)
+
+### Rate Limit Penalties
+
+- Active rate limit (429): Availability = blocked
+- Cooldown < 10 minutes: Availability = delayed
+- Cooldown > 10 minutes: Availability = blocked
+
+### Disabled/Flagged
+
+- Disabled accounts: Excluded from forecast
+- Flagged accounts: Not in main pool (use `verify-flagged`)
+
+## Examples
+
+### Quick forecast
+
+```bash
+codex auth forecast
+```
+
+### Live forecast with quota
+
+```bash
+codex auth forecast --live
+```
+
+### Forecast for specific model
+
+```bash
+codex auth forecast --live --model gpt-5-turbo
+```
+
+### Machine-readable forecast
+
+```bash
+codex auth forecast --json
+```
+
+### Extract recommended index
+
+```bash
+BEST=$(codex auth forecast --json | jq -r '.recommendation.index + 1')
+codex auth switch $BEST
+```
+
+### Automation: Switch to best account
+
+```bash
+#!/bin/bash
+FORECAST=$(codex auth forecast --live --json)
+AVAILABILITY=$(echo $FORECAST | jq -r '.recommendation.availability')
+
+if [ "$AVAILABILITY" = "ready" ]; then
+  INDEX=$(echo $FORECAST | jq -r '.recommendation.index + 1')
+  codex auth switch $INDEX
+  echo "Switched to account $INDEX"
+else
+  echo "No ready accounts available"
+  exit 1
+fi
+```
+
+## Performance
+
+### Default Mode
+
+- **Speed**: ~100-200ms for 10 accounts
+- **Network**: No API calls (uses cached data)
+- **Accuracy**: Based on last health check
+
+### Live Mode
+
+- **Speed**: ~2-3 seconds per account
+- **Network**: 1 API request per account
+- **Accuracy**: Real-time quota and rate limit status
+
+For 10 accounts with `--live`: ~30 seconds total.
+
+## When to Use Each Mode
+
+### Default Mode
+
+Good for:
+
+- Fast lookups during active sessions
+- Pre-request account selection
+- High-frequency automation
+
+### Live Mode
+
+Good for:
+
+- Pre-session planning (morning check)
+- After long idle periods
+- When quota matters (batch jobs)
+- Debugging rate limit issues
+
+## Exit Codes
+
+<ParamField path="0" type="exit code">
+  Forecast completed (even if no ready accounts)
+</ParamField>
+
+<ParamField path="1" type="exit code">
+  Forecast failed (no accounts, storage error)
+</ParamField>
+
+## Troubleshooting
+
+### No Ready Accounts
+
+```
+Recommended account:
+  → None (all accounts blocked or delayed)
+```
+
+Check account status:
+
+```bash
+codex auth check --live
+codex auth verify-flagged
+```
+
+### Live Probe Times Out
+
+Increase timeout:
+
+```bash
+CODEX_AUTH_FETCH_TIMEOUT_MS=30000 codex auth forecast --live
+```
+
+### Recommendation Doesn't Match Usage
+
+Clear session affinity:
+
+```bash
+rm ~/.codex/multi-auth/session-affinity.json
+codex auth forecast --live
+```
+
+### Stale Quota Data
+
+Force refresh:
+
+```bash
+rm ~/.codex/multi-auth/quota-cache.json
+codex auth forecast --live
+```
+
+## Related Commands
+
+- [`codex auth check`](/cli/auth-check) - Update health scores
+- [`codex auth switch`](/cli/auth-switch) - Switch to recommended account
+- [`codex auth report`](/cli/auth-report) - Detailed analysis
+- [`codex auth status`](/cli/auth-status) - Current account state
+
+## Integration Examples
+
+### Pre-commit hook
+
+```bash
+#!/bin/bash
+# .git/hooks/pre-commit
+codex auth forecast --live --json > /tmp/forecast.json
+READY=$(jq -r '.recommendation.availability' /tmp/forecast.json)
+
+if [ "$READY" != "ready" ]; then
+  echo "Warning: No ready accounts for code review"
+fi
+```
+
+### CI/CD pipeline
+
+```yaml
+# .github/workflows/test.yml
+steps:
+  - name: Check account forecast
+    run: |
+      codex auth forecast --live --json | jq '.recommendation.availability == "ready"'
+```
+
+### Monitoring dashboard
+
+```bash
+# Cron: Every 15 minutes
+*/15 * * * * codex auth forecast --live --json > /var/www/html/forecast.json
+```

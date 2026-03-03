@@ -1,0 +1,353 @@
+---
+title: Troubleshooting
+description: Common issues and solutions for Codex Multi-Auth login, switching, quota, and command routing
+---
+
+Deterministic recovery guide for authentication, account switching, quota, and command-routing issues.
+
+## Quick Recovery (60 Seconds)
+
+If you encounter any authentication or account health issues, start here:
+
+<Steps>
+  <Step title="Run the doctor command">
+    ```bash
+    codex auth doctor --fix
+    ```
+    This attempts to auto-repair unhealthy accounts and refresh expired tokens.
+  </Step>
+
+  <Step title="Verify account health">
+    ```bash
+    codex auth check
+    ```
+    Confirms that accounts are healthy and tokens are valid.
+  </Step>
+
+  <Step title="Test live quota">
+    ```bash
+    codex auth forecast --live
+    ```
+    Verifies real-time quota availability.
+  </Step>
+</Steps>
+
+If the issue persists, try re-authenticating:
+
+```bash
+codex auth login
+```
+
+## Common Issues
+
+<Accordion title="'codex auth' not recognized">
+  **Likely cause**: Wrapper path conflict or incorrect installation.
+
+  **Solution**:
+
+  <Steps>
+    <Step title="Check command routing">
+      ```bash
+      # Windows
+      where codex
+
+      # macOS/Linux
+      which codex
+      # or
+      command -v codex
+      ```
+    </Step>
+
+    <Step title="Verify installation">
+      ```bash
+      codex multi auth status
+      npm ls -g codex-multi-auth
+      ```
+    </Step>
+
+    <Step title="Reinstall if needed">
+      If an old scoped package is still active:
+      ```bash
+      npm uninstall -g @ndycode/codex-multi-auth
+      npm i -g codex-multi-auth
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="Browser opens unexpectedly during auth">
+  **Likely cause**: Normal OAuth browser-first flow.
+
+  **Solution**: This is expected behavior. Complete the authentication in the browser and return to the terminal. The OAuth callback server runs at `http://127.0.0.1:1455/auth/callback`.
+
+  <Info>
+  The browser-based OAuth flow is required by ChatGPT for secure authentication. No credentials are transmitted via the command line.
+  </Info>
+</Accordion>
+
+<Accordion title="Switch succeeded but wrong account used">
+  **Likely cause**: Stale Codex CLI state cached in memory.
+
+  **Solution**:
+
+  <Steps>
+    <Step title="Re-run the switch command">
+      ```bash
+      codex auth switch <index>
+      ```
+    </Step>
+
+    <Step title="Restart terminal session">
+      Close and reopen your terminal to clear cached state.
+    </Step>
+
+    <Step title="Verify active account">
+      ```bash
+      codex auth status
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="PR worktree asks for login again">
+  **Likely cause**: Worktree was using a different legacy path key before shared storage was added.
+
+  **Solution**: Run `codex auth list` once in the worktree to trigger migration into repo-shared storage.
+
+  **Background**: Linked Git worktrees now share accounts via `resolveProjectStorageIdentityRoot`. Legacy worktree-keyed account files are auto-migrated on first load. Legacy files are retained only if the canonical write fails (to prevent data loss).
+</Accordion>
+
+<Accordion title="'missing field id_token' error">
+  **Likely cause**: Stale auth payload from an expired or incomplete OAuth flow.
+
+  **Solution**: Re-login the affected account:
+
+  ```bash
+  codex auth login
+  ```
+
+  This refreshes the entire authentication payload including the `id_token`.
+</Accordion>
+
+<Accordion title="'refresh_token_reused' error">
+  **Likely cause**: Token pair rotated elsewhere (e.g., logged in from another machine or browser).
+
+  **Solution**: Re-login the affected account to obtain a new token pair:
+
+  ```bash
+  codex auth login
+  ```
+
+  <Warning>
+  OAuth refresh tokens are single-use. Reusing a refresh token from a different session invalidates the current session.
+  </Warning>
+</Accordion>
+
+<Accordion title="'token_expired' error">
+  **Likely cause**: Refresh token is no longer valid (typically after 30+ days).
+
+  **Solution**: Re-login the affected account:
+
+  ```bash
+  codex auth login
+  ```
+
+  The proactive refresh guardian (enabled by default) should prevent this in active sessions. If you see this error frequently, ensure `proactiveRefreshGuardian: true` in your settings.
+</Accordion>
+
+<Accordion title="All accounts unhealthy">
+  **Likely cause**: Entire account pool has stale or expired tokens.
+
+  **Solution**:
+
+  <Steps>
+    <Step title="Attempt auto-repair">
+      ```bash
+      codex auth doctor --fix
+      ```
+    </Step>
+
+    <Step title="Add a fresh account">
+      If auto-repair fails, add at least one fresh account:
+      ```bash
+      codex auth login
+      ```
+    </Step>
+
+    <Step title="Verify recovery">
+      ```bash
+      codex auth list
+      codex auth check
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+<Accordion title="OAuth callback port 1455 in use">
+  **Likely cause**: Another process (possibly a stale `codex` instance) is using port `1455`.
+
+  **Solution**: Stop the conflicting process and retry login.
+
+  **Find the process**:
+
+  ```bash
+  # macOS/Linux
+  lsof -i :1455
+
+  # Windows
+  netstat -ano | findstr :1455
+  ```
+
+  Kill the process and run `codex auth login` again.
+</Accordion>
+
+<Accordion title="Stream stall or timeout errors">
+  **Likely cause**: Network latency or SSE stream interruption.
+
+  **Solution**: Increase the stream stall timeout:
+
+  ```bash
+  export CODEX_AUTH_STREAM_STALL_TIMEOUT_MS=90000
+  ```
+
+  Or edit `~/.codex/multi-auth/settings.json`:
+
+  ```json
+  {
+    "pluginConfig": {
+      "streamStallTimeoutMs": 90000
+    }
+  }
+  ```
+
+  Default is 45000ms (45 seconds). Minimum is 1000ms.
+</Accordion>
+
+<Accordion title="Rate limit errors despite healthy accounts">
+  **Likely cause**: Quota exhaustion across all accounts.
+
+  **Solution**:
+
+  <Steps>
+    <Step title="Check live quota">
+      ```bash
+      codex auth forecast --live --model gpt-5-codex
+      ```
+    </Step>
+
+    <Step title="Wait for quota replenishment">
+      If preemptive quota is enabled (default), requests will be deferred up to `preemptiveQuotaMaxDeferralMs` (2 hours default).
+    </Step>
+
+    <Step title="Add more accounts">
+      For higher throughput, add additional accounts to the pool:
+      ```bash
+      codex auth login
+      ```
+    </Step>
+  </Steps>
+</Accordion>
+
+## Diagnostics Pack
+
+When filing an issue or debugging locally, gather this information:
+
+```bash
+codex auth list
+codex auth status
+codex auth check
+codex auth verify-flagged --json
+codex auth forecast --live
+codex auth fix --dry-run
+codex auth report --live --json
+codex auth doctor --json
+```
+
+Include the output in your issue report along with:
+
+```bash
+codex --version
+npm ls -g codex-multi-auth
+```
+
+And the failing command with full terminal output.
+
+## Verify Installation and Routing
+
+Confirm that the plugin is installed correctly and command routing is functional:
+
+```bash
+# Check which codex binary is active
+where codex       # Windows
+which codex       # macOS/Linux
+
+# Verify version
+codex --version
+
+# Check auth status
+codex auth status
+codex multi auth status
+
+# Verify package installation
+npm ls -g codex-multi-auth
+```
+
+If an old scoped package is still active:
+
+```bash
+npm uninstall -g @ndycode/codex-multi-auth
+npm i -g codex-multi-auth
+```
+
+## Soft Reset
+
+If all else fails, perform a soft reset to clear account and settings state:
+
+<Warning>
+This will remove all stored accounts and settings. You will need to re-authenticate after the reset.
+</Warning>
+
+### PowerShell
+
+```powershell
+Remove-Item "$HOME\.codex\multi-auth\openai-codex-accounts.json" -Force -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.codex\multi-auth\openai-codex-flagged-accounts.json" -Force -ErrorAction SilentlyContinue
+Remove-Item "$HOME\.codex\multi-auth\settings.json" -Force -ErrorAction SilentlyContinue
+codex auth login
+```
+
+### Bash
+
+```bash
+rm -f ~/.codex/multi-auth/openai-codex-accounts.json
+rm -f ~/.codex/multi-auth/openai-codex-flagged-accounts.json
+rm -f ~/.codex/multi-auth/settings.json
+codex auth login
+```
+
+After the reset:
+
+```bash
+codex auth check
+codex auth forecast --live --model gpt-5-codex
+```
+
+## Issue Report Checklist
+
+When filing an issue, attach these outputs:
+
+- [ ] `codex auth report --json`
+- [ ] `codex auth doctor --json`
+- [ ] `codex --version`
+- [ ] `npm ls -g codex-multi-auth`
+- [ ] Failing command and full terminal output
+- [ ] Operating system and Node.js version
+
+This information accelerates troubleshooting and ensures reproducible diagnostics.
+
+## Related Resources
+
+- [Configuration Guide](/guides/configuration) — Adjust timeouts and sync settings
+- [Account Management](/guides/account-management) — Health scoring and token refresh
+- [Upgrading Guide](/guides/upgrading) — Migration from legacy installs
+- [CLI Commands Overview](/cli/overview) — Full command documentation

@@ -1,0 +1,322 @@
+---
+title: codex auth verify-flagged
+description: Verify flagged accounts and optionally restore healthy ones
+---
+
+Re-test accounts that were previously flagged as unhealthy and optionally restore them if they're working again.
+
+## Usage
+
+```bash
+codex auth verify-flagged [--dry-run] [--json] [--no-restore]
+```
+
+<ParamField path="--dry-run" type="boolean" default="false">
+  Preview which accounts would be restored without making changes.
+</ParamField>
+
+<ParamField path="--json" type="boolean" default="false">
+  Output machine-readable JSON instead of human-friendly text.
+</ParamField>
+
+<ParamField path="--no-restore" type="boolean" default="false">
+  Verify only - do not restore healthy flagged accounts.
+</ParamField>
+
+## What Are Flagged Accounts?
+
+Accounts are moved to the flagged list when:
+
+1. **Token refresh fails** with hard failures:
+   - `invalid_grant` - Refresh token revoked
+   - `invalid_client` - OAuth client issue
+   - `unauthorized_client` - Authorization removed
+   - Account deletion or email change
+
+2. **Consecutive failures** exceed threshold (typically 3)
+
+3. **Manual flagging** via dashboard (Delete → Move to Flagged)
+
+Flagged accounts are stored in:
+
+```
+~/.codex/multi-auth/openai-codex-flagged-accounts.json
+```
+
+## How It Works
+
+1. Loads all flagged accounts
+2. Attempts token refresh for each account
+3. Tests access token validity
+4. Optionally performs live quota probe
+5. Restores healthy accounts back to main pool (unless `--no-restore`)
+6. Updates flagged list with verification timestamps
+
+## Example Output
+
+### Default Mode (Restore Enabled)
+
+```
+Verifying 3 flagged account(s)...
+  ✓ alice@example.com | restored (was: invalid_grant, now: working)
+  ✗ bob@work.com | still broken (invalid_grant)
+  ! carol@personal.com | refresh succeeded but rate-limited
+
+Result: 1 restored | 1 still broken | 1 warning
+```
+
+### Dry Run Mode
+
+```
+Verifying 3 flagged account(s) (dry run)...
+  ✓ alice@example.com | would restore (was: invalid_grant, now: working)
+  ✗ bob@work.com | would remain flagged (invalid_grant)
+
+Result (dry run): 1 would restore | 1 would remain flagged
+```
+
+### Verify-Only Mode (`--no-restore`)
+
+```
+Verifying 3 flagged account(s) (verify only)...
+  ✓ alice@example.com | healthy (but not restored: --no-restore)
+  ✗ bob@work.com | still broken (invalid_grant)
+
+Result: 1 healthy | 1 still broken | 0 restored
+```
+
+## JSON Output
+
+```bash
+codex auth verify-flagged --json
+```
+
+```json
+{
+  "total": 3,
+  "verified": 3,
+  "restored": 1,
+  "stillBroken": 1,
+  "warnings": 1,
+  "accounts": [
+    {
+      "email": "alice@example.com",
+      "accountId": "user-abc123",
+      "status": "restored",
+      "previousReason": "invalid_grant",
+      "currentStatus": "working"
+    },
+    {
+      "email": "bob@work.com",
+      "accountId": "user-def456",
+      "status": "still_broken",
+      "reason": "invalid_grant"
+    },
+    {
+      "email": "carol@personal.com",
+      "accountId": "user-ghi789",
+      "status": "warning",
+      "reason": "rate_limited"
+    }
+  ]
+}
+```
+
+## Restoration Criteria
+
+An account is restored if:
+
+1. **Token refresh succeeds** - New access token obtained
+2. **Access token is valid** - Not expired or malformed
+3. **No active rate limits** - Not currently cooling down
+4. **Not in `--no-restore` mode**
+5. **Not a dry run**
+
+## Exit Codes
+
+<ParamField path="0" type="exit code">
+  All flagged accounts verified (restored or confirmed broken)
+</ParamField>
+
+<ParamField path="1" type="exit code">
+  Verification failed (storage errors, network issues)
+</ParamField>
+
+## Examples
+
+### Verify and restore
+
+```bash
+codex auth verify-flagged
+```
+
+### Preview restorations
+
+```bash
+codex auth verify-flagged --dry-run
+```
+
+### Check status without restoring
+
+```bash
+codex auth verify-flagged --no-restore
+```
+
+### Machine-readable check
+
+```bash
+codex auth verify-flagged --json | jq '.restored'
+```
+
+### Automated recovery
+
+```bash
+#!/bin/bash
+# Verify flagged accounts daily
+codex auth verify-flagged --json > flagged-report.json
+
+# Alert if any restored
+if [ $(jq '.restored' flagged-report.json) -gt 0 ]; then
+  echo "Some flagged accounts were restored"
+  codex auth check --live
+fi
+```
+
+## Why Accounts Get Flagged
+
+### Common Reasons
+
+1. **Password changed** - User changed ChatGPT password
+2. **Token revoked** - Manual token revocation in ChatGPT settings
+3. **Account deleted** - ChatGPT account deleted
+4. **OAuth app removed** - User removed OAuth authorization
+5. **Email changed** - Primary email address changed
+
+### Temporary Failures (Not Flagged)
+
+These failures do NOT flag accounts:
+
+- Network timeouts
+- Rate limit errors (429)
+- Server errors (5xx)
+- Temporary auth service outages
+
+## Restoration Impact
+
+When an account is restored:
+
+1. **Moved back to main pool** - `openai-codex-accounts.json`
+2. **Health score reset** - Starts at 100
+3. **Cooldowns cleared** - Rate limit timers reset
+4. **Metadata updated** - Email, account ID refreshed
+5. **Flagged entry removed** - Deleted from `openai-codex-flagged-accounts.json`
+
+## Best Practices
+
+### Regular Verification
+
+Run weekly to catch recovered accounts:
+
+```bash
+# Cron: Every Sunday at 3 AM
+0 3 * * 0 codex auth verify-flagged
+```
+
+### Before Important Work
+
+Check flagged accounts before long sessions:
+
+```bash
+codex auth verify-flagged
+codex auth check --live
+codex auth forecast --live
+```
+
+### Dry Run First
+
+Always preview in production:
+
+```bash
+codex auth verify-flagged --dry-run
+# Review output
+codex auth verify-flagged
+```
+
+## Troubleshooting
+
+### No Flagged Accounts
+
+```
+No flagged accounts to verify.
+```
+
+This is good - all accounts are healthy.
+
+### All Verifications Fail
+
+Network or auth service issue:
+
+```bash
+# Wait and retry
+sleep 300
+codex auth verify-flagged
+```
+
+### Restored Account Immediately Fails
+
+The account may have transient issues:
+
+```bash
+codex auth check
+# If it fails again, manually remove it
+codex auth login
+# Dashboard → select account → D (delete permanently)
+```
+
+### Storage Permission Denied
+
+Check file permissions:
+
+```bash
+ls -la ~/.codex/multi-auth/openai-codex-flagged-accounts.json
+chmod 600 ~/.codex/multi-auth/openai-codex-flagged-accounts.json
+```
+
+## Related Commands
+
+- [`codex auth check`](/cli/auth-check) - Health check active accounts
+- [`codex auth fix`](/cli/auth-fix) - Repair storage and accounts
+- [`codex auth doctor`](/cli/auth-doctor) - Full diagnostics including flagged accounts
+- [`codex auth report`](/cli/auth-report) - Include flagged accounts in report
+- [`codex auth login`](/cli/auth-login) - Manually restore accounts via dashboard
+
+## Storage Files
+
+### Flagged Accounts Storage
+
+```json
+{
+  "version": 1,
+  "accounts": [
+    {
+      "accountId": "user-abc123",
+      "email": "alice@example.com",
+      "refreshToken": "token-xyz...",
+      "flaggedAt": 1709251200000,
+      "flaggedReason": "invalid_grant",
+      "lastVerified": 1709337600000,
+      "verificationCount": 3
+    }
+  ]
+}
+```
+
+Location: `~/.codex/multi-auth/openai-codex-flagged-accounts.json`
+
+### Verification Metadata
+
+Each verification updates:
+
+- `lastVerified` - Timestamp of last verification attempt
+- `verificationCount` - Total verification attempts
+- Status outcome (still broken, restored, etc.)

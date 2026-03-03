@@ -1,0 +1,407 @@
+---
+title: codex auth fix
+description: Apply safe repairs to account storage and metadata
+---
+
+Automatically detect and fix common issues with account storage, metadata, and configuration.
+
+## Usage
+
+```bash
+codex auth fix [--dry-run] [--json] [--live] [--model <model>]
+```
+
+<ParamField path="--dry-run" type="boolean" default="false">
+  Preview repairs without making changes to storage.
+</ParamField>
+
+<ParamField path="--json" type="boolean" default="false">
+  Output machine-readable JSON instead of human-friendly text.
+</ParamField>
+
+<ParamField path="--live" type="boolean" default="false">
+  Perform live quota probes before applying fixes.
+</ParamField>
+
+<ParamField path="--model" type="string" default="gpt-5-codex">
+  Model to use for live quota probes (only with `--live`).
+</ParamField>
+
+## What Gets Fixed
+
+### Automatic Repairs
+
+1. **Missing account IDs** - Extract from JWT access tokens
+2. **Missing emails** - Extract from ID tokens
+3. **Duplicate accounts** - Merge by token/email/ID
+4. **Invalid active index** - Reset to valid range
+5. **Corrupted metadata** - Remove invalid fields
+6. **Stale access tokens** - Refresh if needed
+7. **Missing timestamps** - Set defaults (addedAt, lastUsed)
+8. **Invalid cooldown timers** - Clear expired cooldowns
+9. **Orphaned rate limits** - Remove stale entries
+10. **Storage format migration** - Upgrade V1/V2 to V3
+
+### Safe Operations Only
+
+The fix command only performs **non-destructive** operations:
+
+- ✅ Add missing metadata
+- ✅ Refresh expired tokens
+- ✅ Merge duplicates
+- ✅ Reset invalid indices
+- ✅ Clear expired timers
+- ❌ Delete accounts
+- ❌ Disable accounts
+- ❌ Change active account
+
+## Example Output
+
+### Default Mode
+
+```
+Running safe account fixes...
+  ✓ Refreshed 2 expired access tokens
+  ✓ Added missing account IDs for 1 account
+  ✓ Merged 2 duplicate accounts
+  ✓ Cleared 1 expired cooldown timer
+  ✓ Reset invalid active index (was 99, now 0)
+
+Result: 5 fixes applied
+```
+
+### Dry Run Mode
+
+```
+Running safe account fixes (dry run)...
+  ! Would refresh 2 expired access tokens
+  ! Would add missing account IDs for 1 account
+  ! Would merge 2 duplicate accounts
+  ! Would clear 1 expired cooldown timer
+  ! Would reset invalid active index (was 99, now 0)
+
+Result (dry run): 5 fixes needed
+```
+
+### Live Mode
+
+```
+Running safe account fixes with live probe (model: gpt-5-codex)...
+  ✓ Probed 4 accounts for quota status
+  ✓ Refreshed 2 expired access tokens
+  ✓ Updated quota cache for 4 accounts
+  ✓ Added missing account IDs for 1 account
+  ✓ Cleared 1 expired cooldown timer
+
+Result: 5 fixes applied (with live quota update)
+```
+
+## JSON Output
+
+```bash
+codex auth fix --json
+```
+
+```json
+{
+  "mode": "fix",
+  "dryRun": false,
+  "liveProbe": false,
+  "fixes": [
+    {
+      "type": "refresh_token",
+      "accountEmail": "alice@example.com",
+      "description": "Refreshed expired access token"
+    },
+    {
+      "type": "add_account_id",
+      "accountEmail": "bob@work.com",
+      "accountId": "user-abc123",
+      "description": "Extracted account ID from access token"
+    },
+    {
+      "type": "merge_duplicates",
+      "kept": "alice@example.com",
+      "merged": "alice@example.com (duplicate)",
+      "description": "Merged duplicate account by email"
+    },
+    {
+      "type": "clear_cooldown",
+      "accountEmail": "carol@personal.com",
+      "description": "Cleared expired cooldown timer"
+    },
+    {
+      "type": "reset_active_index",
+      "oldIndex": 99,
+      "newIndex": 0,
+      "description": "Reset invalid active index"
+    }
+  ],
+  "totalFixes": 5
+}
+```
+
+## Fix Types
+
+<ParamField path="refresh_token" type="fix">
+  Refresh expired access tokens using valid refresh tokens.
+</ParamField>
+
+<ParamField path="add_account_id" type="fix">
+  Extract and set missing account IDs from JWT tokens.
+</ParamField>
+
+<ParamField path="add_email" type="fix">
+  Extract and set missing email addresses from ID tokens.
+</ParamField>
+
+<ParamField path="merge_duplicates" type="fix">
+  Merge accounts with same token/email/ID into single entry.
+</ParamField>
+
+<ParamField path="reset_active_index" type="fix">
+  Reset active account index to valid range (0 to count-1).
+</ParamField>
+
+<ParamField path="clear_cooldown" type="fix">
+  Remove expired cooldown timers (past reset time).
+</ParamField>
+
+<ParamField path="remove_invalid_fields" type="fix">
+  Delete corrupted or schema-invalid metadata fields.
+</ParamField>
+
+<ParamField path="add_timestamps" type="fix">
+  Set missing addedAt/lastUsed timestamps to current time.
+</ParamField>
+
+<ParamField path="migrate_storage" type="fix">
+  Upgrade account storage from V1/V2 to V3 format.
+</ParamField>
+
+<ParamField path="update_quota_cache" type="fix">
+  Refresh quota cache with live probe data (only with `--live`).
+</ParamField>
+
+## Examples
+
+### Preview fixes
+
+```bash
+codex auth fix --dry-run
+```
+
+### Apply fixes
+
+```bash
+codex auth fix
+```
+
+### Fix with live quota update
+
+```bash
+codex auth fix --live --model gpt-5-codex
+```
+
+### Machine-readable output
+
+```bash
+codex auth fix --json
+```
+
+### Count fixes needed
+
+```bash
+codex auth fix --dry-run --json | jq '.totalFixes'
+```
+
+### Apply fixes and verify
+
+```bash
+codex auth fix
+codex auth check --live
+codex auth forecast --live
+```
+
+## When to Run
+
+### After Errors
+
+If you see storage or account errors:
+
+```bash
+codex auth fix
+codex auth check
+```
+
+### After Manual Edits
+
+If you manually edited storage files:
+
+```bash
+codex auth fix --dry-run  # Preview
+codex auth fix            # Apply
+```
+
+### Periodic Maintenance
+
+Weekly cleanup:
+
+```bash
+# Cron: Every Sunday at 2 AM
+0 2 * * 0 codex auth fix --live
+```
+
+### After Upgrades
+
+After updating codex-multi-auth:
+
+```bash
+codex auth fix  # Migrate storage if needed
+codex auth check --live
+```
+
+## Exit Codes
+
+<ParamField path="0" type="exit code">
+  Fixes completed successfully (or no fixes needed).
+</ParamField>
+
+<ParamField path="1" type="exit code">
+  Fix operation failed (storage write error, network failure).
+</ParamField>
+
+## Performance
+
+### Default Mode
+
+- **Speed**: ~100-500ms
+- **Network**: Only for token refresh (if needed)
+- **Writes**: Single storage file update
+
+### Live Mode
+
+- **Speed**: ~2-3 seconds per account
+- **Network**: 1 API request per account + token refresh
+- **Writes**: Storage + quota cache updates
+
+For 10 accounts with `--live`: ~30-40 seconds total.
+
+## Safety Guarantees
+
+### Backup Creation
+
+Before any writes, a backup is created:
+
+```
+~/.codex/multi-auth/openai-codex-accounts.json.backup
+```
+
+If fix fails, restore with:
+
+```bash
+cp ~/.codex/multi-auth/openai-codex-accounts.json.backup \
+   ~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+### Atomic Writes
+
+Storage updates use atomic write-then-rename to prevent corruption.
+
+### Validation
+
+All fixes are validated before write:
+
+- Schema compliance checked
+- Index bounds validated
+- Token format verified
+- Duplicate detection run
+
+## Troubleshooting
+
+### Fix Reports No Issues But Problems Persist
+
+Run doctor for deeper diagnostics:
+
+```bash
+codex auth doctor --fix
+```
+
+### Storage Backup Not Created
+
+Check permissions:
+
+```bash
+ls -la ~/.codex/multi-auth/
+chmod 755 ~/.codex/multi-auth/
+```
+
+### Fix Fails with Write Error
+
+Ensure directory is writable:
+
+```bash
+chmod 600 ~/.codex/multi-auth/openai-codex-accounts.json
+```
+
+On Windows, check file locks:
+
+```powershell
+# Close any editors or tools accessing the file
+```
+
+### Duplicate Merge Incorrect
+
+Manually remove duplicates via dashboard:
+
+```bash
+codex auth login
+# Select duplicate → press D (delete)
+```
+
+## Related Commands
+
+- [`codex auth doctor`](/cli/auth-doctor) - Full diagnostics with deeper repairs
+- [`codex auth check`](/cli/auth-check) - Validate fixes worked
+- [`codex auth report`](/cli/auth-report) - View current state
+- [`codex auth verify-flagged`](/cli/auth-verify-flagged) - Fix flagged accounts
+
+## Advanced Usage
+
+### Automated repair workflow
+
+```bash
+#!/bin/bash
+set -e
+
+# Preview fixes
+codex auth fix --dry-run --json > fixes-preview.json
+
+# If fixes needed, apply
+if [ $(jq '.totalFixes' fixes-preview.json) -gt 0 ]; then
+  codex auth fix --live --json > fixes-applied.json
+  codex auth check --live
+  codex auth forecast --live
+fi
+```
+
+### Pre-deployment checks
+
+```bash
+# CI/CD pipeline
+codex auth fix --dry-run --json | jq '.totalFixes == 0'
+# Exit code 0 if no fixes needed, 1 otherwise
+```
+
+### Conditional live probe
+
+```bash
+# Only use live probe if many fixes needed
+FIXES=$(codex auth fix --dry-run --json | jq '.totalFixes')
+
+if [ $FIXES -gt 3 ]; then
+  codex auth fix --live
+else
+  codex auth fix
+fi
+```
