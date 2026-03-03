@@ -1,0 +1,143 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Codex Multi-Auth",
+  "projectDescription": "Multi-account OAuth manager for OpenAI Codex CLI with resilient routing, quota-aware rotation, and terminal-first diagnostics",
+  "theme": "aspen",
+  "primaryColor": "#10B981",
+  "lightColor": "#34D399",
+  "darkColor": "#059669",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/multi-account-oauth",
+              "concepts/account-rotation",
+              "concepts/quota-management",
+              "concepts/session-recovery"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/account-management",
+              "guides/configuration",
+              "guides/troubleshooting",
+              "guides/upgrading"
+            ]
+          },
+          {
+            "group": "Features",
+            "pages": [
+              "features/forecasting-repair",
+              "features/storage-safety",
+              "features/runtime-reliability",
+              "features/terminal-ui"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "Commands",
+            "pages": [
+              "cli/overview",
+              "cli/auth-login",
+              "cli/auth-list",
+              "cli/auth-status",
+              "cli/auth-switch",
+              "cli/auth-check",
+              "cli/auth-verify-flagged",
+              "cli/auth-forecast",
+              "cli/auth-report",
+              "cli/auth-fix",
+              "cli/auth-doctor"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "cli/settings-reference",
+              "cli/environment-variables",
+              "cli/storage-paths"
+            ]
+          },
+          {
+            "group": "Dashboard",
+            "pages": [
+              "cli/dashboard-hotkeys",
+              "cli/account-details",
+              "cli/settings-screens"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Advanced",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "advanced/architecture-overview",
+              "advanced/oauth-flow",
+              "advanced/request-pipeline",
+              "advanced/failure-handling"
+            ]
+          },
+          {
+            "group": "Integration",
+            "pages": [
+              "advanced/plugin-system",
+              "advanced/codex-cli-integration",
+              "advanced/automation"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "advanced/contributing",
+              "advanced/testing",
+              "advanced/security"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Multi-account OAuth pool with health-aware selection and automatic failover",
+    "Interactive terminal dashboard for account login, switching, and diagnostics",
+    "Forecast, report, fix, and doctor commands for operational safety",
+    "Project-scoped account storage with global defaults",
+    "Proactive refresh and preemptive quota deferral controls",
+    "Session affinity and live account sync for reduced account thrashing",
+    "Safe storage migrations with backup and WAL write strategy",
+    "Configurable terminal themes with hotkey navigation"
+  ],
+  "publicApiSurface": [
+    "codex auth login",
+    "codex auth list",
+    "codex auth status",
+    "codex auth switch <index>",
+    "codex auth check",
+    "codex auth features",
+    "codex auth verify-flagged",
+    "codex auth forecast [--live] [--model <model>] [--json]",
+    "codex auth report [--live] [--json] [--out <path>]",
+    "codex auth fix [--dry-run] [--live] [--model <model>] [--json]",
+    "codex auth doctor [--fix] [--dry-run] [--json]"
+  ]
+}
