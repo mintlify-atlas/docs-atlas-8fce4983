@@ -1,0 +1,62 @@
+---
+title: codex auth features
+description: Display implemented feature list for Codex Multi-Auth
+---
+
+Display a numbered list of all implemented features in the current version of Codex Multi-Auth.
+
+## Usage
+
+```bash
+codex auth features
+```
+
+## Description
+
+The `features` command prints a simple numbered list of all implemented capabilities in the current version. This is useful for:
+
+- Checking feature availability before using specific functionality
+- Verifying which features are included in your installed version
+- Quick reference for support or troubleshooting
+
+## Output format
+
+The command displays:
+- Total feature count
+- Numbered list of feature names
+
+<Note>
+The feature list is hardcoded in the source and represents the full capability set of the installed version.
+</Note>
+
+## Example output
+
+```bash
+$ codex auth features
+Implemented features (40)
+
+1. Multi-account OAuth pool
+2. Health-aware account selection
+3. Automatic failover on rate limits
+4. Project-scoped account storage
+5. Interactive terminal dashboard
+6. Forecast, report, fix, and doctor commands
+7. Flagged account verification and restore
+8. Session affinity with TTL
+9. Live account sync
+10. Proactive token refresh
+...
+40. OAuth browser-first flow with manual callback fallback
+```
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Feature list displayed successfully |
+
+## Related commands
+
+- [`codex auth status`](/cli/auth-status) - View runtime status
+- [`codex auth check`](/cli/auth-check) - Validate account health
+- [`codex auth doctor`](/cli/auth-doctor) - Full diagnostics

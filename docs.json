@@ -72,6 +72,7 @@
               "cli/auth-status",
               "cli/auth-switch",
               "cli/auth-check",
+              "cli/auth-features",
               "cli/auth-verify-flagged",
               "cli/auth-forecast",
               "cli/auth-report",
